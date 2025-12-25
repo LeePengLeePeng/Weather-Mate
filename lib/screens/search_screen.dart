@@ -9,8 +9,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:weather_test/bloc/weather_bloc_bloc.dart';
 import 'package:weather_test/tool/fade_route.dart';
+// 請確認您的檔案名稱大小寫是否正確
 import 'WeatherPreviewScreen.dart'; 
 
+// ⚠️ 注意：如果您的 WeatherPreviewScreen.dart 或 weather_model.dart 裡面已經有定義 CityData
+// 請刪除下面這個 class CityData 定義，並改用 import 匯入，否則會報錯 "CityData is defined in..."
 class CityData {
   final String name;
   final double latitude;
@@ -44,6 +47,8 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClientMixin {
   
+  String _userCountryCode = 'TW'; // 預設台灣
+
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focusNode = FocusNode();
 
@@ -57,9 +62,21 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   void initState() {
     super.initState();
     _loadSavedCities();
+
+    // 嘗試抓取系統語系來決定預設國家 (例如 zh_TW -> TW)
+    try {
+      final String? systemCountry = WidgetsBinding.instance.platformDispatcher.locale.countryCode;
+      if (systemCountry != null) {
+        _userCountryCode = systemCountry; 
+      }
+    } catch (e) {
+      debugPrint("無法獲取系統地區: $e");
+    }
+
     _focusNode.addListener(() {
       setState(() {
         _isFocused = _focusNode.hasFocus;
+        // 當失去焦點且沒內容時，清空搜尋結果
         if (!_isFocused && _controller.text.isEmpty) {
           _searchResults.clear();
         }
@@ -77,11 +94,8 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   @override
   bool get wantKeepAlive => true;
 
-  // 🔥【新增】補上缺少的 onChanged 函式
   void _onSearchChanged(String value) {
     setState(() {
-      // 這裡主要用來更新 UI (例如顯示/隱藏清除按鈕)
-      // 如果你希望打字時就自動搜尋，可以在這裡加邏輯
       if (value.isEmpty) {
         _searchResults.clear();
       }
@@ -126,7 +140,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     await prefs.setStringList('saved_cities', stringList);
   }
 
-  // --- 📍 抓取目前位置邏輯 ---
+  // --- 📍 抓取目前位置 ---
   Future<void> _useCurrentLocation() async {
     setState(() => _isLoading = true);
     try {
@@ -151,10 +165,10 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     }
   }
 
-  // --- 🔍 搜尋邏輯 ---
+  // --- 🔍 搜尋邏輯 (雙軌搜尋：同時找當地與全球) ---
   Future<void> _searchCity(String query) async {
     if (query.isEmpty) return;
-
+    
     setState(() {
       _isLoading = true;
       _errorMessage = '';
@@ -162,76 +176,118 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     });
 
     try {
-      List<Location> locations = await locationFromAddress(query);
-      List<CityData> tempResults = [];
+      // 1. 定義兩個搜尋任務
+      // 任務 A: 全域搜尋 (通常會找到最熱門的，例如日本三重)
+      Future<List<Location>> globalSearch = locationFromAddress(query);
+      
+      // 任務 B: 當地優先搜尋 (強制加上國家名，例如 "台灣三重")
+      String localQuery = "${_countryCodeToName(_userCountryCode)}$query";
+      Future<List<Location>> localSearch = locationFromAddress(localQuery);
 
-      for (var loc in locations) {
-        try {
-          List<Placemark> placemarks = await placemarkFromCoordinates(loc.latitude, loc.longitude);
-          if (placemarks.isNotEmpty) {
-            Placemark p = placemarks.first;
-            String city = p.administrativeArea ?? ''; 
-            String district = p.locality ?? '';       
-            String name = "$city $district".trim();
-            if (name.isEmpty) name = query; 
+      // 2. 同時執行並等待結果 (catchError 確保其中一個失敗不會讓程式崩潰)
+      List<List<Location>> results = await Future.wait([
+        globalSearch.catchError((_) => <Location>[]), 
+        localSearch.catchError((_) => <Location>[])
+      ]);
 
-            if (!tempResults.any((element) => element.name == name)) {
-               tempResults.add(CityData(name: name, latitude: loc.latitude, longitude: loc.longitude));
+      List<Location> globalLocations = results[0];
+      List<Location> localLocations = results[1];
+
+      // 3. 解析與合併結果
+      List<CityData> mergedResults = [];
+
+      // 輔助函式：將 Location 轉為 CityData 並加入清單
+      Future<void> parseAndAdd(List<Location> locs) async {
+        for (var loc in locs) {
+          try {
+            List<Placemark> placemarks = await placemarkFromCoordinates(loc.latitude, loc.longitude);
+            if (placemarks.isNotEmpty) {
+              Placemark p = placemarks.first;
+              String city = p.administrativeArea ?? ''; 
+              String district = p.locality ?? p.subLocality ?? ''; 
+              String country = p.country ?? '';
+
+              // 組合顯示名稱
+              String displayName = "";
+              if (district.isNotEmpty) {
+                displayName = district;
+                if (city.isNotEmpty && city != district) displayName += ", $city";
+              } else if (city.isNotEmpty) {
+                displayName = city;
+              } else {
+                displayName = p.name ?? query;
+              }
+              
+              // 🔥 強制顯示國家，區分 "日本" vs "台灣"
+              if (country.isNotEmpty) displayName += " ($country)";
+
+              // 檢查重複 (避免清單出現一模一樣的)
+              if (!mergedResults.any((element) => element.name == displayName)) {
+                mergedResults.add(CityData(name: displayName, latitude: loc.latitude, longitude: loc.longitude));
+              }
             }
+          } catch (e) { 
+            debugPrint("解析地址失敗: $e"); 
           }
-        } catch (e) { print("反查失敗: $e"); }
+        }
       }
 
+      // 依序加入：優先放當地結果 (Task B)，再放全球結果 (Task A)
+      await parseAndAdd(localLocations);
+      await parseAndAdd(globalLocations);
+
       setState(() {
-        _searchResults = tempResults;
+        _searchResults = mergedResults;
         if (_searchResults.isEmpty) _errorMessage = "找不到相關地點";
       });
 
     } catch (e) {
       setState(() {
-        _errorMessage = "找不到地點";
+        _errorMessage = "搜尋發生錯誤，請稍後再試";
       });
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
+  }
+
+  // 簡單的國家代碼轉中文名稱 (輔助搜尋用)
+  String _countryCodeToName(String code) {
+    if (code == 'TW') return '台灣';
+    if (code == 'JP') return '日本';
+    if (code == 'US') return '美國';
+    if (code == 'CN') return '中國';
+    if (code == 'HK') return '香港';
+    return ''; 
   }
 
   // --- 🎨 UI 建構 ---
   @override
   Widget build(BuildContext context) {
-    super.build(context); // 🔥 4. 必須呼叫這行！
+    super.build(context);
 
-    // 用 FadeTransition 包住整個頁面，讓它第一次載入時有柔和的淡入感
     return Scaffold(
-      backgroundColor: Colors.transparent, // 讓底下的共用背景透出來
+      backgroundColor: Colors.transparent, 
       
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        // 建議將狀態列改為亮色模式 (白字)，因為天氣背景通常較深
         systemOverlayStyle: SystemUiOverlayStyle.light, 
         
         leading: IconButton(
-          // 🔥 修改 2: 將箭頭改成白色，避免在深色背景看不見
           icon: const Icon(Icons.arrow_forward_ios, color: Colors.white),
           onPressed: () {
             _focusNode.unfocus();
             widget.onCitySelected?.call();
           },
         ),
-        // 🔥 修改 3: 標題也改成白色
         title: const Text("管理城市", style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontWeight: FontWeight.bold)),
       ),
       
-      // 🔥 修改 4: 內容區域保持原本的 Stack 結構
-      // 這裡的 BackdropFilter 會自動模糊底下的「共用天氣背景」，效果會非常漂亮！
       body: Stack(
         children: [
-          // ------------------------------------------------------
-          // Layer A: 全螢幕的淡入模糊遮罩
-          // ------------------------------------------------------
+          // Layer A: 背景模糊遮罩
           Positioned.fill(
             child: AnimatedOpacity(
               opacity: (_isFocused || _searchResults.isNotEmpty || _isLoading) ? 1.0 : 0.0,
@@ -247,7 +303,6 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                         end: Alignment.bottomCenter,   
                         stops: const [0.0, 0.15, 1.0], 
                         colors: [
-                          // 這裡維持原本的半透明白，這樣搜尋時會有「毛玻璃」效果
                           Colors.white.withOpacity(0.0), 
                           Colors.white.withOpacity(0.1),
                           Colors.white.withOpacity(0.3), 
@@ -260,9 +315,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
             ),
           ),
 
-          // ------------------------------------------------------
           // Layer B: 點擊空白處收起鍵盤
-          // ------------------------------------------------------
           if (_isFocused || _searchResults.isNotEmpty || _isLoading)
             Positioned.fill(
               child: GestureDetector(
@@ -276,18 +329,16 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
               ),
             ),
 
-          // ------------------------------------------------------
-          // Layer C: 真正的內容 (搜尋框 + 列表)
-          // ------------------------------------------------------
+          // Layer C: 搜尋框與列表
           Column(
             children: [
-              // 1. 搜尋框區域
+              // 1. 搜尋框
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: TextField(
                   controller: _controller,
                   focusNode: _focusNode,
-                  style: const TextStyle(color: Colors.black87), // 輸入框內的字維持黑色(因為有白色底)
+                  style: const TextStyle(color: Colors.black87),
                   decoration: InputDecoration(
                     hintText: '輸入城市名稱 (例如: Taipei)',
                     hintStyle: TextStyle(color: Colors.grey[600]),
@@ -324,7 +375,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                        const Center(child: CircularProgressIndicator(color: Colors.white)),
                     
                     if (_errorMessage.isNotEmpty)
-                       Center(child: Text(_errorMessage, style: const TextStyle(color: Colors.white))), // 錯誤訊息改白色比較明顯
+                       Center(child: Text(_errorMessage, style: const TextStyle(color: Colors.white))),
 
                     if (_searchResults.isNotEmpty)
                       _buildSearchResults()
@@ -358,7 +409,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
               ),
               child: ListTile(
                 leading: const Icon(Icons.my_location, color: Colors.blueAccent),
-                title: const Text("目前位置", style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 18, fontWeight: FontWeight.bold)), // 修正為白色，因為背景深
+                title: const Text("目前位置", style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 18, fontWeight: FontWeight.bold)),
                 subtitle: const Text("GPS 定位", style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 12)),
                 onTap: _useCurrentLocation, 
               ),
@@ -392,20 +443,20 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
             ),
             child: Container(
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.4), // 調整為半透明白
+                color: Colors.white.withOpacity(0.4),
                 borderRadius: BorderRadius.circular(15), 
                 border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
               ),
               child: ListTile(
-                title: Text(city.name, style: const TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.bold)), // 調整為深色字
+                title: Text(city.name, style: const TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.bold)),
                 trailing: const Icon(Icons.arrow_forward_ios, color: Colors.black54, size: 14), 
                 onTap: () {
                   context.read<WeatherBlocBloc>().add(FetchWeather(Position(
-                  latitude: city.latitude,
-                  longitude: city.longitude,
-                  timestamp: DateTime.now(),
-                  accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0, isMocked: false
-                )));
+                    latitude: city.latitude,
+                    longitude: city.longitude,
+                    timestamp: DateTime.now(),
+                    accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0, isMocked: false
+                  )));
 
                   widget.onCitySelected?.call();
                 },
@@ -417,7 +468,6 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     );
   }
 
-  // 修改這個方法
   Widget _buildSearchResults() {
     return ListView.separated(
       padding: const EdgeInsets.all(16),
@@ -442,10 +492,10 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                 fontWeight: FontWeight.bold
               )
             ),
-              onTap: () async {
+            onTap: () async {
                 _focusNode.unfocus(); // 收起鍵盤
                 
-                // 🔥 1. 恢復：跳轉到預覽頁面 (使用淡入轉場)
+                // 跳轉到預覽頁面
                 final bool? shouldAdd = await Navigator.push(
                   context,
                   createFadeRoute(WeatherPreviewScreen(city: city)),
@@ -453,7 +503,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
 
                 if (!mounted) return;
 
-                // 🔥 2. 判斷使用者是否在預覽頁按下了「新增」
+                // 判斷使用者是否在預覽頁按下了「新增」
                 if (shouldAdd == true) {
                   // (A) 加入儲存列表
                   await _addCityToSaved(city);
@@ -465,17 +515,17 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                   });
 
                   // (C) 通知 Bloc 更新天氣
-                if (mounted) {
-                  context.read<WeatherBlocBloc>().add(FetchWeather(Position(
-                    latitude: city.latitude,
-                    longitude: city.longitude,
-                    timestamp: DateTime.now(),
-                    accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0, isMocked: false
-                  )));
-                }
+                  if (mounted) {
+                    context.read<WeatherBlocBloc>().add(FetchWeather(Position(
+                      latitude: city.latitude,
+                      longitude: city.longitude,
+                      timestamp: DateTime.now(),
+                      accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0, isMocked: false
+                    )));
+                  }
 
-                // (D) 呼叫 callback 滑回主頁
-                widget.onCitySelected?.call(); 
+                  // (D) 呼叫 callback 滑回主頁
+                  widget.onCitySelected?.call(); 
               }
             },
           ),

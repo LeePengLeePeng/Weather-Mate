@@ -353,8 +353,8 @@ class WeatherView extends StatelessWidget {
                 ),
                 const SizedBox(height: 30),
 
-                // --- 7 Day Forecast ---
-                const Text('7 DAY FORECAST', style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 1.2)),
+                // --- 5 Day Forecast ---
+                const Text('5 DAY FORECAST', style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 1.2)),
                 const SizedBox(height: 10),
                 Container(
                   decoration: BoxDecoration(

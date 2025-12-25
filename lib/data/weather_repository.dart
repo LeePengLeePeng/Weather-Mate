@@ -63,30 +63,43 @@ class WeatherRepository {
   // 產生給 AI 看的報告 (把數據轉文字)
   String _generateAIReport(String city, WeatherModel w) {
     StringBuffer sb = StringBuffer();
-    sb.writeln("地點：$city (${w.areaName})");
-    sb.writeln("目前狀況：${w.description}, 氣溫 ${w.temperature}°C, 降雨機率 ${w.rainChance}%");
-    sb.writeln("--- 未來預報數據 ---");
     
+    // 1. 基本資訊
+    sb.writeln("【地點】：$city (${w.areaName})");
+    sb.writeln("【目前】：${w.description}, 氣溫 ${w.temperature}°C, 體感 ${w.feelsLike}°C, 降雨機率 ${w.rainChance}%");
+    
+    // 2. 未來 12 小時 (短期細節)
+    sb.writeln("\n--- 未來 12 小時預報 (短期) ---");
     DateTime now = DateTime.now();
+    
+    // 確保數據安全
+    int hourlyCount = w.hourlyTemps.length;
+    if (w.hourlyRainChance.length < hourlyCount) hourlyCount = w.hourlyRainChance.length;
+    if (hourlyCount > 12) hourlyCount = 12; // 只取前 12 小時避免太長
 
-    List<double> safeTemps = w.hourlyTemps; 
-    List<int> safeRains = w.hourlyRainChance;
-
-    int limit = safeTemps.length;
-    if (safeRains.length < limit) {
-      limit = safeRains.length;
+    for (int i = 0; i < hourlyCount; i += 3) { // 每 3 小時取一筆，節省 Token
+      DateTime time = now.add(Duration(hours: i));
+      String timeStr = DateFormat('MM/dd HH:mm').format(time);
+      double temp = w.hourlyTemps[i];
+      int rain = w.hourlyRainChance[i];
+      sb.writeln("$timeStr -> 溫 ${temp.toStringAsFixed(1)}°C, 雨 $rain%");
     }
 
-    for (int i = 0; i < limit; i++) {
-      if (i < 12 && i % 3 == 0) {
-        DateTime time = now.add(Duration(hours: i));
-        String timeStr = DateFormat('MM/dd HH:mm').format(time);
-        sb.writeln("$timeStr -> 溫 ${safeTemps[i].toStringAsFixed(1)}°C, 雨 ${safeRains[i]}%");
+    // 3. 未來 7 天 (長期趨勢 - 關鍵修改 🔥)
+    if (w.dailyForecasts != null && w.dailyForecasts!.isNotEmpty) {
+      sb.writeln("\n--- 未來 7 天預報 (長期) ---");
+      for (var d in w.dailyForecasts!) {
+        String dateStr = DateFormat('MM/dd (E)', 'zh_TW').format(d.date); // 例如: 12/26 (週四)
+        // 為了讓 AI 讀懂，明確標示高低溫與降雨
+        sb.writeln("📅 $dateStr : 低溫 ${d.minTemp.toStringAsFixed(1)}°C / 高溫 ${d.maxTemp.toStringAsFixed(1)}°C, 降雨機率 ${d.rainChance}%");
       }
+    } else {
+      sb.writeln("\n(無長期預報資料)");
     }
     
-    sb.writeln("--- 報告結束 ---");
-    sb.writeln("請根據以上數據，判斷是否需要帶傘或增減衣物。");
+    sb.writeln("\n--- 報告結束 ---");
+    sb.writeln("注意：回答時請根據使用者問的日期（今天、明天、或是具體星期幾）從上方數據找答案。");
+    
     return sb.toString();
   }
 
@@ -351,27 +364,10 @@ class WeatherRepository {
       
       if (tempNode != null) {
         var timeList = _safeGetList(tempNode, 'Time');
-        print("   -> 找到 ${timeList.length} 筆溫度時間資料");
         
-        for (int i = 0; i < timeList.length && i < 24; i++) {
-           var item = timeList[i];
-           // 🔥 容錯：大小寫 ElementValue
-           var valList = _safeGetList(item, 'ElementValue');
-           if (valList.isEmpty) valList = _safeGetList(item, 'elementValue');
-           
-           if (valList.isNotEmpty) {
-             // 🔥 容錯：大小寫 Value / Temperature
-             var val = _safeGet(valList[0], 'value') ?? 
-                       _safeGet(valList[0], 'Value') ?? 
-                       _safeGet(valList[0], 'Temperature');
-             
-             if (val != null) {
-               cwaHourlyTemps.add(double.parse(val.toString()));
-             } else {
-               print("   ⚠️ 第 $i 筆資料找不到數值 (value/Value)");
-             }
-           }
-        }
+        // 🔥 修改點：使用 helper 展開數據，而不是直接 add
+        cwaHourlyTemps = _expandTempToHourly(timeList);
+
       } else {
         print("   ⚠️ 找不到 [T, 溫度] 節點");
       }
@@ -379,12 +375,13 @@ class WeatherRepository {
       print("   ❌ 解析逐時溫度發生錯誤: $e");
     }
     
+    // 如果還是空的，或解析失敗，用目前溫度補滿
     if (cwaHourlyTemps.isEmpty) {
-      print("   ⚠️ 逐時溫度為空，使用目前溫度填充");
       cwaHourlyTemps = List.filled(24, currentTemp);
-    } else {
-      print("   ✅ 成功解析 ${cwaHourlyTemps.length} 筆逐時溫度: ${cwaHourlyTemps.take(5)}...");
     }
+    // 強制截斷或補齊至 24 筆 (雙重保險)
+    if (cwaHourlyTemps.length > 24) cwaHourlyTemps = cwaHourlyTemps.sublist(0, 24);
+    while (cwaHourlyTemps.length < 24) cwaHourlyTemps.add(cwaHourlyTemps.isNotEmpty ? cwaHourlyTemps.last : currentTemp);
 
     // --- 逐時降雨 (Hourly Rain) ---
     List<int> cwaHourlyRainChance = [];
@@ -446,141 +443,150 @@ class WeatherRepository {
     print("🎯 提前計算大圖示: code=$openWeatherMapCode, 降雨=$currentRainChance%");
     
 
-    // --- 未來 7 天預報 (Daily Forecast) ---
-    print("📅 開始解析 7 天預報...");
+    // --- 未來 7 天預報 (從已解析的逐時溫度推算) ---
+    print("📅 開始解析 7 天預報 (從逐時溫度推算)...");
     List<DailyWeather> dailyForecasts = [];
+
     try {
-      
-      var tempNode = weatherElements.firstWhere(
-        (e) => ['T', '溫度'].contains(_safeGet(e, 'ElementName')), 
-        orElse: () => null
-      );
       var wxNode = weatherElements.firstWhere(
         (e) => ['Wx', '天氣現象'].contains(_safeGet(e, 'ElementName')), 
         orElse: () => null
       );
-      // 降雨機率可能叫 PoP12h, 12小時降雨機率, PoP3h, 3小時降雨機率...
       var popNode = weatherElements.firstWhere(
-        (e) => ['PoP12h', '12小時降雨機率', 'PoP3h', '3小時降雨機率'].contains(_safeGet(e, 'ElementName')), 
+        (e) => ['PoP12h', '12小時降雨機率'].contains(_safeGet(e, 'ElementName')), 
         orElse: () => null
       );
 
-      if (tempNode != null && wxNode != null) {
-        var tempTimeList = _safeGetList(tempNode, 'Time');
-        var wxTimeList = _safeGetList(wxNode, 'Time');
-        var popTimeList = (popNode != null) ? _safeGetList(popNode, 'Time') : [];
+      // 🔥 關鍵改動：直接使用已經解析好的 cwaHourlyTemps
+      Map<String, List<double>> dayTemps = {};
+      
+      // 將 24 小時的溫度按日期分組
+      DateTime now = DateTime.now();
+      for (int i = 0; i < cwaHourlyTemps.length; i++) {
+        DateTime time = now.add(Duration(hours: i));
+        String dateKey = DateFormat('yyyy-MM-dd').format(time);
+        
+        dayTemps.putIfAbsent(dateKey, () => []).add(cwaHourlyTemps[i]);
+      }
+      
+      print("📊 每日溫度資料: ${dayTemps.map((k, v) => MapEntry(k, '${v.reduce((a,b) => a<b?a:b).toStringAsFixed(1)}~${v.reduce((a,b) => a>b?a:b).toStringAsFixed(1)}°C'))}");
 
-        print("   -> 溫度資料: ${tempTimeList.length} 筆, 天氣現象: ${wxTimeList.length} 筆");
-
-        Map<String, double> dayMaxT = {};
-        Map<String, double> dayMinT = {};
-        Map<String, String> dayWx = {};
-        Map<String, int> dayPop = {};
-
-        // 1️⃣ 解析溫度
-        for (var item in tempTimeList) {
-          String dataTime = _safeGet(item, 'DataTime')?.toString() ?? "";
-          if (dataTime.length >= 10) {
-            String dateKey = dataTime.substring(0, 10);
-            
-            // 🔥 容錯
-            var valList = _safeGetList(item, 'ElementValue');
-            if (valList.isEmpty) valList = _safeGetList(item, 'elementValue');
-
-            if (valList.isNotEmpty) {
-              var tempRaw = _safeGet(valList[0], 'value') ?? 
-                            _safeGet(valList[0], 'Value') ?? 
-                            _safeGet(valList[0], 'Temperature');
-              
-              if (tempRaw != null) {
-                double temp = double.tryParse(tempRaw.toString()) ?? 0.0;
-                if (!dayMaxT.containsKey(dateKey) || temp > dayMaxT[dateKey]!) dayMaxT[dateKey] = temp;
-                if (!dayMinT.containsKey(dateKey) || temp < dayMinT[dateKey]!) dayMinT[dateKey] = temp;
-              }
-            }
-          }
-        }
-
-        // 2️⃣ 解析天氣現象 (類似邏輯，略作精簡)
-        for (var item in wxTimeList) {
+      // 解析天氣現象 (取白天為主)
+      Map<String, String> dayWx = {};
+      if (wxNode != null) {
+        var timeList = _safeGetList(wxNode, 'Time');
+        
+        for (var item in timeList) {
           String startTime = _safeGet(item, 'StartTime')?.toString() ?? "";
-          String dataTime = _safeGet(item, 'DataTime')?.toString() ?? "";
-          String timeStr = startTime.isNotEmpty ? startTime : dataTime;
-          if (timeStr.length >= 10) {
-            String dateKey = timeStr.substring(0, 10);
-            if (!dayWx.containsKey(dateKey)) {
+          
+          if (startTime.length >= 10) {
+            String dateKey = startTime.substring(0, 10);
+            
+            // 優先使用白天（06:00-18:00）的天氣
+            bool isDaytime = startTime.contains('06:00') || 
+                            startTime.contains('09:00') || 
+                            startTime.contains('12:00') ||
+                            startTime.contains('15:00');
+            
+            if (!dayWx.containsKey(dateKey) || isDaytime) {
               var valList = _safeGetList(item, 'ElementValue');
-              if (valList.isEmpty) valList = _safeGetList(item, 'elementValue'); // 容錯
+              if (valList.isEmpty) valList = _safeGetList(item, 'elementValue');
+              
               if (valList.isNotEmpty) {
-                String wxText = _safeGet(valList[0], 'value')?.toString() ?? 
-                              _safeGet(valList[0], 'Weather')?.toString() ?? "";
-                if (wxText.isNotEmpty) dayWx[dateKey] = wxText;
+                String wx = (_safeGet(valList[0], 'Weather') ?? 
+                            _safeGet(valList[0], 'weather') ?? 
+                            _safeGet(valList[0], 'value') ?? 
+                            "多雲").toString();
+                dayWx[dateKey] = wx;
               }
             }
-          }
-        }
-
-        // 3️⃣ 解析降雨機率
-        for (var item in popTimeList) {
-          String startTime = _safeGet(item, 'StartTime')?.toString() ?? "";
-          String dataTime = _safeGet(item, 'DataTime')?.toString() ?? "";
-          String timeStr = startTime.isNotEmpty ? startTime : dataTime;
-          if (timeStr.length >= 10) {
-            String dateKey = timeStr.substring(0, 10);
-            var valList = _safeGetList(item, 'ElementValue');
-            if (valList.isEmpty) valList = _safeGetList(item, 'elementValue'); // 容錯
-            if (valList.isNotEmpty) {
-              var popRaw = _safeGet(valList[0], 'value') ?? 
-                          _safeGet(valList[0], 'PoP');
-              if (popRaw != null) {
-                int pop = int.tryParse(popRaw.toString()) ?? 0;
-                if (!dayPop.containsKey(dateKey) || pop > dayPop[dateKey]!) dayPop[dateKey] = pop;
-              }
-            }
-          }
-        }
-
-        // 4️⃣ 組合 DailyWeather
-        List<String> sortedDates = dayMaxT.keys.toList()..sort();
-        
-        DateTime today = DateTime.now();
-        Set<String> existingDates = sortedDates.toSet();
-        for (int i = 0; i < 6; i++) {
-          DateTime futureDate = today.add(Duration(days: i));
-          String dateKey = DateFormat('yyyy-MM-dd').format(futureDate);
-          if (!existingDates.contains(dateKey)) sortedDates.add(dateKey);
-        }
-        sortedDates.sort();
-        
-        for (String dateKey in sortedDates) {
-          if (dailyForecasts.length >= 6) break;
-          try {
-            DateTime date = DateTime.parse(dateKey);
-            double maxTemp = dayMaxT[dateKey] ?? currentTemp + 2;
-            double minTemp = dayMinT[dateKey] ?? currentTemp - 2;
-            String wxText = dayWx[dateKey] ?? "多雲";
-            int conditionCode = _wxTextToOpenWeatherCode(wxText);
-            int rainChance = dayPop[dateKey] ?? _estimateRainFromWx(wxText);
-            
-            if (dateKey == DateFormat('yyyy-MM-dd').format(DateTime.now())) {
-              conditionCode = openWeatherMapCode;
-              rainChance = currentRainChance;
-            }
-            
-            dailyForecasts.add(DailyWeather(
-              date: date,
-              maxTemp: maxTemp,
-              minTemp: minTemp,
-              rainChance: rainChance,
-              conditionCode: conditionCode,
-            ));
-          } catch (e) {
-            print("   ⚠️ 解析日期失敗 $dateKey: $e");
           }
         }
       }
+
+      // 解析降雨機率 (取最大值)
+      Map<String, int> dayPop = {};
+      if (popNode != null) {
+        var timeList = _safeGetList(popNode, 'Time');
+        
+        for (var item in timeList) {
+          String startTime = _safeGet(item, 'StartTime')?.toString() ?? "";
+          
+          if (startTime.length >= 10) {
+            String dateKey = startTime.substring(0, 10);
+            
+            var valList = _safeGetList(item, 'ElementValue');
+            if (valList.isEmpty) valList = _safeGetList(item, 'elementValue');
+            
+            if (valList.isNotEmpty) {
+              var popVal = _safeGet(valList[0], 'value') ?? 
+                          _safeGet(valList[0], 'PoP');
+              int pop = int.tryParse(popVal?.toString() ?? '0') ?? 0;
+              
+              if (!dayPop.containsKey(dateKey) || pop > dayPop[dateKey]!) {
+                dayPop[dateKey] = pop;
+              }
+            }
+          }
+        }
+      }
+
+      // 組合成 DailyWeather 物件
+      List<String> sortedDates = dayTemps.keys.toList()..sort();
+      
+      for (String dateKey in sortedDates) {
+        if (dayTemps[dateKey]!.isNotEmpty) {
+          DateTime date = DateTime.parse(dateKey);
+          
+          // 從逐時溫度計算高低溫
+          List<double> temps = dayTemps[dateKey]!;
+          double maxT = temps.reduce((a, b) => a > b ? a : b);
+          double minT = temps.reduce((a, b) => a < b ? a : b);
+          
+          String wxText = dayWx[dateKey] ?? "多雲";
+          int pop = dayPop[dateKey] ?? _estimateRainFromWx(wxText);
+          
+          // 如果是今天，使用更精準的當前降雨機率
+          String todayKey = DateFormat('yyyy-MM-dd').format(DateTime.now());
+          if (dateKey == todayKey) {
+            pop = currentRainChance;
+            wxText = wx; // 使用當前天氣描述
+          }
+
+          dailyForecasts.add(DailyWeather(
+            date: date,
+            maxTemp: maxT,
+            minTemp: minT,
+            rainChance: pop,
+            conditionCode: _wxTextToOpenWeatherCode(wxText),
+          ));
+          
+          print("📅 $dateKey: ${minT.toStringAsFixed(1)}°C ~ ${maxT.toStringAsFixed(1)}°C, 降雨 $pop%, $wxText");
+        }
+      }
+
     } catch (e) {
-      print("   ❌ 解析 7 天預報失敗: $e");
+      print("❌ 解析 7 天預報失敗: $e");
+    }
+
+    // 如果 CWA 資料不足 7 天，補充 OpenWeather 的預報
+    if (dailyForecasts.length < 7 && baseData.dailyForecasts != null) {
+      print("⚠️ CWA 預報只有 ${dailyForecasts.length} 天，補充 OpenWeather 至 7 天");
+      
+      // 找出 CWA 最後一天的日期
+      DateTime lastCwaDate = dailyForecasts.isNotEmpty 
+          ? dailyForecasts.last.date 
+          : DateTime.now();
+      
+      for (var owmDay in baseData.dailyForecasts!) {
+        // 只補充 CWA 沒有的未來日期
+        if (owmDay.date.isAfter(lastCwaDate) && dailyForecasts.length < 7) {
+          dailyForecasts.add(owmDay);
+          print("📅 補充 ${DateFormat('yyyy-MM-dd').format(owmDay.date)}: "
+                "${owmDay.minTemp.toStringAsFixed(1)}°C ~ ${owmDay.maxTemp.toStringAsFixed(1)}°C "
+                "(OpenWeather)");
+        }
+      }
     }
 
    // --- 逐時天氣圖示與機率校正 (精準修正版) ---
@@ -894,5 +900,82 @@ class WeatherRepository {
     if (wx.contains('多雲')) return 803;
     
     return 800;
+  }
+
+  // 🔥 新增：展開溫度資料 (處理 3 小時一筆的情況)
+  List<double> _expandTempToHourly(List timeList) {
+    if (timeList.isEmpty) return [];
+    
+    print("🔍 _expandTempToHourly 收到 ${timeList.length} 筆資料");
+    
+    List<double> temps3h = [];
+    
+    for (int i = 0; i < timeList.length; i++) {
+      var item = timeList[i];
+      
+      // 🔥 改進：同時嘗試多種可能的欄位名稱
+      String startTime = (_safeGet(item, 'StartTime') ?? 
+                        _safeGet(item, 'startTime') ?? 
+                        _safeGet(item, 'DataTime') ?? 
+                        _safeGet(item, 'dataTime') ?? "").toString();
+      
+      String endTime = (_safeGet(item, 'EndTime') ?? 
+                      _safeGet(item, 'endTime') ?? "").toString();
+      
+      var valList = _safeGetList(item, 'ElementValue');
+      if (valList.isEmpty) valList = _safeGetList(item, 'elementValue');
+      
+      if (valList.isNotEmpty) {
+        var val = _safeGet(valList[0], 'value') ?? 
+                  _safeGet(valList[0], 'Value') ?? 
+                  _safeGet(valList[0], 'Temperature');
+        
+        double temp = double.tryParse(val?.toString() ?? '0') ?? 0.0;
+        temps3h.add(temp);
+        
+        // 🔥 改進：只在有時間資料時才印出
+        if (i < 10) {
+          if (startTime.isNotEmpty) {
+            print("  [$i] ${startTime.substring(0, startTime.length > 16 ? 16 : startTime.length)} → ${temp.toStringAsFixed(2)}°C");
+          } else {
+            print("  [$i] (無時間資訊) → ${temp.toStringAsFixed(2)}°C");
+          }
+        }
+      }
+    }
+    
+    print("✅ 成功解析 ${temps3h.length} 筆溫度");
+    
+    if (temps3h.isEmpty) return [];
+    
+    // 🔥 線性插值產生逐時溫度
+    List<double> hourly = [];
+    
+    for (int i = 0; i < temps3h.length - 1; i++) {
+      double startTemp = temps3h[i];
+      double endTemp = temps3h[i + 1];
+      
+      // 產生 3 個小時的溫度（線性變化）
+      for (int h = 0; h < 3; h++) {
+        if (hourly.length < 24) {
+          double ratio = h / 3.0;
+          double interpolated = startTemp + (endTemp - startTemp) * ratio;
+          hourly.add(interpolated);
+        }
+      }
+    }
+    
+    // 補上最後一筆
+    while (hourly.length < 24 && temps3h.isNotEmpty) {
+      hourly.add(temps3h.last);
+    }
+    
+    // 🔥 新增：印出最終的逐時溫度
+    print("📊 逐時溫度 (前 24 小時):");
+    for (int i = 0; i < hourly.length && i < 24; i += 3) {  // 每 3 小時印一次
+      print("  第 $i 小時: ${hourly[i].toStringAsFixed(2)}°C");
+    }
+    
+    return hourly;
   }
 }

@@ -4,6 +4,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:weather_test/bloc/weather_bloc_bloc.dart';
 import 'package:weather_test/screens/home_screen.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 Future<void> main() async {
   // 3. 確保 Flutter 引擎綁定初始化 (讀檔或用 plugin 前必加)
@@ -11,6 +12,8 @@ Future<void> main() async {
 
   // 4. 載入 .env 檔案
   await dotenv.load(fileName: ".env");
+
+  await initializeDateFormatting('zh_TW', null);
 
   runApp(const MyApp());
 }

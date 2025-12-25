@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
-import 'package:flutter_bloc/flutter_bloc.dart';
+
+// 🔥 確保引用你的 Bloc 和 Model
 import 'package:weather_test/bloc/weather_bloc_bloc.dart';
-import 'package:weather_test/data/weather_model.dart';
+import 'package:weather_test/data/weather_model.dart'; 
 import 'package:weather_test/data/weather_repository.dart';
-import 'package:weather_test/tool/weather_prompt_helper.dart'; // 請確認路徑是否正確
+import 'package:weather_test/tool/weather_prompt_helper.dart';
 
 enum TaroState { idle, typing, getQuestion, thinking, answer, tapToText }
 
@@ -19,22 +20,24 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> with AutomaticKeepAliveClientMixin {
-  final TextEditingController _controller = TextEditingController();
-  final FocusNode _focusNode = FocusNode();
-  final ScrollController _scrollController = ScrollController(); // 新增：控制對話捲動
-
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
+  final TextEditingController _textController = TextEditingController();
+  final ScrollController _dialogueScrollController = ScrollController();
+  final FocusNode _focusNode = FocusNode(); 
+  
   String get _apiKey => dotenv.env['CHAT_API_KEY'] ?? '';
   static const String _modelId = 'llama-3.3-70b-versatile'; 
 
-  TaroState _taroState = TaroState.idle;
+  TaroState _taroState = TaroState.idle; 
+  String _displayDialogue = ""; 
+  bool _isTyping = false;
   
-  // 🔥 修改 1: 把單一字串改成列表，這樣才有記憶！
-  final List<Map<String, String>> _messages = [];
-  String _currentLocationName = "未知地點"; // 用來偵測地點變更
+  final List<Map<String, String>> _fullHistory = [];
 
-  Timer? _animationTimer;
-  int _playbackId = 0; // 用來觸發 UI 重繪的 ID
+  late AnimationController _floatController;
+  late Animation<double> _floatAnimation;
+  Timer? _typewriterTimer;
+  Timer? _animationTimer; 
 
   final Map<TaroState, String> _assets = {
     TaroState.idle: 'assets/idle.webp',
@@ -45,13 +48,49 @@ class _ChatScreenState extends State<ChatScreen> with AutomaticKeepAliveClientMi
     TaroState.tapToText: 'assets/tap_to_text.webp',
   };
 
+  // 工具定義
+  final Map<String, dynamic> _weatherToolDefinition = {
+    "type": "function",
+    "function": {
+      "name": "get_weather_forecast",
+      "description": "Fetch weather for a NEW location if user explicitly asks for another city.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "City name",
+          }
+        },
+        "required": ["location"],
+      },
+    }
+  };
+
   @override
   void initState() {
     super.initState();
-    // 預設第一句話
-    _messages.add({
-      'role': 'assistant',
-      'content': '你好呀！我是芋圓 ☁️\n要去哪裡玩嗎？'
+    
+    // 🔥 1. 修正：使用 WeatherBlocSuccess 和 .weather
+    final weatherState = context.read<WeatherBlocBloc>().state;
+    String intro;
+
+    if (weatherState is WeatherBlocSuccess) {
+      // 成功抓取天氣，直接帶入地點名稱
+      intro = "嗨！我是芋圓 ☁️\n我知道你在 ${weatherState.weather.areaName}，有什麼想問的嗎？";
+    } else {
+      // 還沒有天氣資料
+      intro = "你好呀！我是芋圓 ☁️\n今天想去哪裡玩呢？";
+    }
+
+    _fullHistory.add({'role': 'assistant', 'content': intro});
+    _startTypewriterEffect(intro);
+
+    // 預載圖片
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        precacheImage(AssetImage(_assets[TaroState.idle]!), context);
+      }
     });
 
     _focusNode.addListener(() {
@@ -60,66 +99,48 @@ class _ChatScreenState extends State<ChatScreen> with AutomaticKeepAliveClientMi
       }
     });
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        precacheImage(AssetImage(_assets[TaroState.idle]!), context);
-      }
-    });
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    precacheImage(AssetImage(_assets[TaroState.idle]!), context);
+    _floatController = AnimationController(
+      duration: const Duration(seconds: 2),
+      vsync: this,
+    )..repeat(reverse: true);
+    
+    _floatAnimation = Tween<double>(begin: 0, end: 10).animate(
+      CurvedAnimation(parent: _floatController, curve: Curves.easeInOut),
+    );
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _textController.dispose();
+    _floatController.dispose();
+    _dialogueScrollController.dispose();
     _focusNode.dispose();
-    _scrollController.dispose();
+    _typewriterTimer?.cancel();
     _animationTimer?.cancel();
     super.dispose();
   }
 
-  String getTaroAnimation() {
-    return _assets[_taroState] ?? 'assets/idle.webp';
-  }
-
-  // 🔥 保留原本的動畫邏輯
   Future<void> _replayAssetWebp(String assetPath) async {
     if (assetPath.contains('idle')) return;
     final provider = AssetImage(assetPath);
     await provider.evict();
   }
 
-  // 🔥 保留原本的動畫邏輯
- void _playOneShotAnimation(TaroState targetState, TaroState nextState, int durationMs) async {
+  void _playOneShotAnimation(TaroState targetState, TaroState nextState, int durationMs) async {
     _animationTimer?.cancel();
-    
-    // 1. 清除快取 (維持原本邏輯)
     await _replayAssetWebp(_assets[targetState]!);
     if (nextState != TaroState.idle) {
        _replayAssetWebp(_assets[nextState]!); 
     }
-
     if (mounted) {
-      setState(() {
-        _taroState = targetState;
-      });
+      setState(() => _taroState = targetState);
     }
-
     _animationTimer = Timer(Duration(milliseconds: durationMs), () {
       if (mounted) {
-        // 如果原本是要接 typing，但鍵盤已經收起來了 (沒焦點)，就直接回 idle
         if (nextState == TaroState.typing && !_focusNode.hasFocus) {
           setState(() => _taroState = TaroState.idle);
         } else {
-          // 正常切換到下一個狀態
-          setState(() {
-             _taroState = nextState;
-             // _playbackId++; // 這裡不需要強制 +1，因為我們拿掉了 Key，讓 gaplessPlayback 自己處理
-          });
+          setState(() => _taroState = nextState);
         }
       }
     });
@@ -131,99 +152,91 @@ class _ChatScreenState extends State<ChatScreen> with AutomaticKeepAliveClientMi
     }
   }
 
-  // 自動捲到底部
-  void _scrollToBottom() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOut,
-        );
+  void _startTypewriterEffect(String text) {
+    _typewriterTimer?.cancel();
+    final charactersList = text.characters.toList();
+    setState(() {
+      _displayDialogue = "";
+      _isTyping = true;
+    });
+    int index = 0;
+    _typewriterTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      if (index < charactersList.length) {
+        if (mounted) {
+          setState(() => _displayDialogue += charactersList[index]);
+          if (_dialogueScrollController.hasClients) {
+            _dialogueScrollController.jumpTo(_dialogueScrollController.position.maxScrollExtent);
+          }
+        }
+        index++;
+      } else {
+        if (mounted) setState(() => _isTyping = false);
+        timer.cancel();
       }
     });
   }
 
-  final Map<String, dynamic> _weatherToolDefinition = {
-    "type": "function",
-    "function": {
-      "name": "get_weather_forecast",
-      "description": "獲取指定城市或地區的詳細天氣預報，包括溫度、降雨機率及氣象建議。",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "location": {
-            "type": "string",
-            "description": "城市名稱或地區名稱，例如：'東京'、'紐約'、'新北市新店區'",
-          }
-        },
-        "required": ["location"],
-      },
-    }
-  };
+  Future<void> _handleSubmitted(String text) async {
+    if (text.trim().isEmpty) return;
 
-  Future<void> _sendMessage() async {
-    final text = _controller.text.trim();
-    if (text.isEmpty || _taroState == TaroState.thinking) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    _textController.clear();
+    _playOneShotAnimation(TaroState.getQuestion, TaroState.thinking, 800);
 
     setState(() {
-      _messages.add({'role': 'user', 'content': text});
+      _fullHistory.add({'role': 'user', 'content': text});
     });
-    _controller.clear();
-    _focusNode.unfocus();
-    _scrollToBottom();
-    
-    _playOneShotAnimation(TaroState.getQuestion, TaroState.thinking, 400);
-
-    // 1. 準備基礎訊息
-    List<Map<String, dynamic>> apiMessages = [];
-    
-    // 注入目前位置作為 context (選用)
-    final weatherState = context.read<WeatherBlocBloc>().state;
-    if (weatherState is WeatherBlocSuccess) {
-      apiMessages.add({
-        'role': 'system', 
-        'content': "你是氣象助理芋圓。當前位置：${weatherState.weather.areaName}。${WeatherPromptHelper.generateSystemPrompt(weatherState.weather)}"
-      });
-    }
-
-    // 加入歷史對話
-    for (var msg in _messages) {
-      if (msg['role'] == 'user' || msg['role'] == 'assistant') {
-        apiMessages.add({'role': msg['role']!, 'content': msg['content']!});
-      }
-    }
+    _startTypewriterEffect("..."); 
 
     try {
-      // --- 第一步：詢問 Groq (帶上 Tool 定義) ---
+      // 🔥 2. 修正：每次對話前，重新抓取最新的天氣狀態
+      final weatherState = context.read<WeatherBlocBloc>().state;
+      
+      String systemContent;
+      
+      // 這裡改成 WeatherBlocSuccess 和 .weather
+      if (weatherState is WeatherBlocSuccess) {
+        // 將天氣資料傳給 Prompt Helper
+        systemContent = WeatherPromptHelper.generateSystemPrompt(weatherState.weather);
+      } else {
+        // 如果沒有資料，使用預設 Prompt
+        systemContent = 'You are Taro, a weather assistant. Reply in the SAME language as the user. If you don\'t know the location, ask politely.';
+      }
+
+      List<Map<String, dynamic>> apiMessages = [
+        {
+          'role': 'system',
+          'content': systemContent
+        }
+      ];
+      
+      for (var msg in _fullHistory) {
+        apiMessages.add({'role': msg['role']!, 'content': msg['content']!});
+      }
+
       var response = await _callGroqAPI(apiMessages, tools: [_weatherToolDefinition]);
       var message = response['choices'][0]['message'];
 
-      // --- 第二步：檢查 AI 是否要查天氣 ---
       if (message['tool_calls'] != null) {
         for (var toolCall in message['tool_calls']) {
           final functionName = toolCall['function']['name'];
-          final arguments = jsonDecode(toolCall['function']['arguments']);
-          final location = arguments['location'];
-
+          final args = jsonDecode(toolCall['function']['arguments']);
+          
           if (functionName == 'get_weather_forecast') {
-            // 呼叫你寫好的 Repository！
-            // 注意：這裡需要實例化 WeatherRepository 或從 Bloc 取得
-            final weatherRepo = WeatherRepository(); 
-            String weatherInfo = await weatherRepo.getWeatherForecastForGroq(location);
+             if (mounted) _startTypewriterEffect("🔍 ☁️ ${args['location']}...");
+             
+             final weatherRepo = WeatherRepository(); 
+             String weatherInfo = await weatherRepo.getWeatherForecastForGroq(args['location']);
 
-            // 將工具結果加入對話紀錄
-            apiMessages.add(message); // 加入 AI 的呼叫請求
-            apiMessages.add({
-              'role': 'tool',
-              'tool_call_id': toolCall['id'],
-              'name': functionName,
-              'content': weatherInfo,
-            });
+             apiMessages.add(message);
+             apiMessages.add({
+               'role': 'tool',
+               'tool_call_id': toolCall['id'],
+               'name': functionName,
+               'content': weatherInfo,
+             });
           }
         }
-
-        // --- 第三步：將氣象數據餵回 AI，取得最終自然語言回覆 ---
         response = await _callGroqAPI(apiMessages);
         message = response['choices'][0]['message'];
       }
@@ -232,25 +245,20 @@ class _ChatScreenState extends State<ChatScreen> with AutomaticKeepAliveClientMi
 
       if (mounted) {
         setState(() {
-          _messages.add({'role': 'assistant', 'content': replyText});
+          _fullHistory.add({'role': 'assistant', 'content': replyText});
         });
-        _scrollToBottom();
         _playOneShotAnimation(TaroState.answer, TaroState.idle, 1500);
+        _startTypewriterEffect(replyText);
       }
+
     } catch (e) {
-      print("Chat Error: $e");
       if (mounted) {
-        setState(() {
-           _messages.add({'role': 'assistant', 'content': '芋圓連線失敗了... 😭'});
-           _taroState = TaroState.idle;
-        });
-        _scrollToBottom();
+        _startTypewriterEffect("Error: $e");
+        setState(() => _taroState = TaroState.idle);
       }
-      // 錯誤處理...
     }
   }
-  
-  // 輔助函式：統一呼叫 Groq API
+
   Future<Map<String, dynamic>> _callGroqAPI(List<Map<String, dynamic>> messages, {List<dynamic>? tools}) async {
     final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
     final response = await http.post(
@@ -264,284 +272,218 @@ class _ChatScreenState extends State<ChatScreen> with AutomaticKeepAliveClientMi
         'messages': messages,
         if (tools != null) 'tools': tools,
         'tool_choice': 'auto',
-        'temperature': 0.5,
       }),
     );
-
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
     } else {
-      throw Exception('Groq API Error: ${response.body}');
+      throw Exception('API Error');
     }
   }
 
-  void _clearHistory() {
-    // 收起鍵盤
-    FocusScope.of(context).unfocus();
-    _controller.clear();
-
-    setState(() {
-      // 1. 清空所有對話
-      _messages.clear();
-      
-      // 2. 加回原本的開場白
-      _messages.add({
-        'role': 'assistant',
-        'content': '記憶已清除！我是芋圓 ☁️\n有什麼想問的嗎？'
-      });
-
-      // 3. 重置芋圓狀態
-      _taroState = TaroState.idle;
-      
-      // 4. 重置播放 ID (確保動畫不會因為 Key 相同而不重繪)
-      _playbackId++;
-    });
-
-    // 5. 確保預載 Idle 圖
-    precacheImage(AssetImage(_assets[TaroState.idle]!), context);
-  }
-
-  @override
-  bool get wantKeepAlive => true;
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final isKeyboardOpen = bottomInset > 0;
-
-    // 📏 參數設定
-    const double taroRealHeight = 250; // 芋圓實際大小
-    const double glassHeight = 250;    // 🔥 玻璃顯示高度 (變矮)
-    const double inputHeight = 85;     // 輸入框高度
-
-    // 文字防擋邏輯維持不變
-    final double listPaddingBottom = isKeyboardOpen 
-        ? inputHeight 
-        : (taroRealHeight + inputHeight);
-
-    return Scaffold(
+  void _showHistoryDialog() {
+      showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      extendBodyBehindAppBar: true,
-      resizeToAvoidBottomInset: false,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        leading: null,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.cleaning_services_outlined, color: Colors.black54),
-            tooltip: '清除對話',
-            onPressed: () => _clearHistory(),
+      builder: (context) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.8,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10)],
           ),
-          const SizedBox(width: 10),
-        ],
-        title: const Text(
-          "芋圓的氣象站",
-          style: TextStyle(
-            color: Color.fromARGB(255, 57, 57, 57),
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-      body: GestureDetector(
-        onTap: () => FocusScope.of(context).unfocus(),
-        child: SafeArea(
-          bottom: false,
-          child: Stack(
+          child: Column(
             children: [
-              // -----------------------------------------------------
-              // 第一層：對話列表
-              // -----------------------------------------------------
-              Positioned.fill(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  padding: EdgeInsets.only(
-                    top: 60,
-                    left: 20,
-                    right: 20,
-                    bottom: listPaddingBottom + 20, 
-                  ),
-                  itemCount: _messages.length,
-                  itemBuilder: (context, index) {
-                    final msg = _messages[index];
-                    final isUser = msg['role'] == 'user';
-                    final isSystem = msg['role'] == 'system_info';
-
-                    if (isSystem) {
-                      return Center(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8.0),
-                          child: Text(msg['content']!, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                        ),
-                      );
-                    }
-                    return _buildChatBubble(msg['content']!, isUser);
-                  },
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text("History", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87)),
+                    IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                  ],
                 ),
               ),
-
-              // -----------------------------------------------------
-              // 第二層：毛玻璃背景 (包住芋圓 + 輸入框)
-              // -----------------------------------------------------
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: bottomInset,
-                child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                    child: Container(
-                      color: Colors.white.withOpacity(0.3), // 玻璃顏色
-                      padding: EdgeInsets.zero,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: _fullHistory.length,
+                  itemBuilder: (context, index) {
+                    final msg = _fullHistory[index];
+                    final isUser = msg['role'] == 'user';
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
                         children: [
-                          
-                          // ☁️ 芋圓動畫區塊
-                          AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            curve: Curves.easeOut,
-                            height: isKeyboardOpen ? 0 : glassHeight, // 🔥 玻璃高度 160
-                            width: 250, 
-                            // 🔥 這裡改用 Stack + Clip.none 來解決報錯
-                            child: Stack(
-                              clipBehavior: Clip.none, // 關鍵：允許子元件畫在框框外面！
-                              alignment: Alignment.bottomCenter,
-                              children: [
-                                // 只有當鍵盤沒開的時候才渲染芋圓，避免高度為 0 時的錯誤
-                                if (!isKeyboardOpen)
-                                  Positioned(
-                                    bottom: 0, // 貼齊底部
-                                    height: taroRealHeight, // 強制高度 250 (會凸出去)
-                                    width: 250,
-                                    child: Image.asset(
-                                      getTaroAnimation(),
-                                      fit: BoxFit.contain,
-                                      gaplessPlayback: true,
-                                      
-                                    ),
-                                  ),
-                              ],
+                          if (!isUser) const Padding(padding: EdgeInsets.only(top: 4), child: Text("☁️ ", style: TextStyle(fontSize: 18))),
+                          Flexible(
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: isUser ? Colors.orange[300] : Colors.grey[100],
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: SelectableText(
+                                msg['content']!,
+                                style: TextStyle(color: isUser ? Colors.white : Colors.black87, fontSize: 15),
+                              ),
                             ),
                           ),
-
-                          // ⌨️ 輸入框
-                          _buildInputSection(),
+                          if (isUser) const Padding(padding: EdgeInsets.only(top: 4), child: Text(" 👤", style: TextStyle(fontSize: 18))),
                         ],
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ],
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
-  // 📋 新增：對話氣泡樣式 (模仿你原本的白色圓角風格)
-  Widget _buildChatBubble(String content, bool isUser) {
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Column(
-        crossAxisAlignment: isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        children: [
-          Container(
-            margin: const EdgeInsets.symmetric(vertical: 6),
-            padding: const EdgeInsets.all(16),
-            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-            decoration: BoxDecoration(
-              color: isUser ? Colors.orange[300] : Colors.white.withOpacity(0.9),
-              borderRadius: BorderRadius.circular(20),
-              boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4, offset: Offset(0, 2))],
-            ),
-            child: Text(
-              content,
-              style: TextStyle(
-                fontSize: 16, 
-                fontWeight: FontWeight.w500,
-                color: isUser ? Colors.white : Colors.black87
-              ),
-            ),
-          ),
-          // 如果是芋圓講話，加一個小三角形 (裝飾用)
-          if (!isUser)
-             Transform.translate(
-               offset: const Offset(20, -8), // 稍微往上移一點，接在氣泡下面
-               child: CustomPaint(
-                painter: TrianglePainter(color: Colors.white.withOpacity(0.9)),
-                size: const Size(15, 10),
-               ),
-             ),
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.history, color: Colors.black54, size: 28),
+          onPressed: _showHistoryDialog,
+          tooltip: "History",
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline, color: Colors.black54),
+            onPressed: () {
+               setState(() {
+                 _fullHistory.clear();
+                 _startTypewriterEffect("Memory cleared.");
+               });
+            },
+          )
         ],
       ),
-    );
-  }
-
-  Widget _buildInputSection() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
-      decoration: BoxDecoration(
-        color: const Color.fromARGB(255, 122, 117, 126).withOpacity(0.5),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
-      ),
-      child: Row(
+      extendBodyBehindAppBar: true,
+      body: Column(
         children: [
           Expanded(
-            child: Container(
-              height: 40,
-              decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(25)),
-              child: TextField(
-                controller: _controller,
-                focusNode: _focusNode,
-                onTap: _handleInputTap,
-                textAlignVertical: TextAlignVertical.center,
-                decoration: const InputDecoration(
-                  hintText: '問問芋圓...',
-                  border: InputBorder.none,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 20, vertical: -7),
-                  isDense: true, 
-                ),
-                onSubmitted: (_) => _sendMessage(),
+            flex: 3,
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  SizedBox(
+                    width: 250,
+                    height: 250,
+                    child: Image.asset(
+                      _assets[_taroState]!, 
+                      fit: BoxFit.contain,
+                      gaplessPlayback: true,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
-          const SizedBox(width: 10),
-          IconButton(
-            onPressed: _sendMessage,
-            icon: const CircleAvatar(
-              backgroundColor: Colors.blueAccent,
-              child: Icon(Icons.send, color: Colors.white),
+          Expanded(
+            flex: 2,
+            child: Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.95),
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.08), 
+                    blurRadius: 15, 
+                    offset: const Offset(0, 5)
+                  )
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+                    child: Row(
+                      children: [
+                        const Text("Yuyuan", style: TextStyle(color: Color(0xFF5D5D5D), fontWeight: FontWeight.bold, fontSize: 16)),
+                        const SizedBox(width: 8),
+                        if (_isTyping) const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.orange))
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      controller: _dialogueScrollController,
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Text(
+                        _displayDialogue, 
+                        style: const TextStyle(color: Color(0xFF333333), fontSize: 17, height: 1.6, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(30),
+                      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
+                    ),
+                    child: TextField(
+                      controller: _textController,
+                      focusNode: _focusNode,
+                      onTap: _handleInputTap,
+                      style: const TextStyle(color: Colors.black87),
+                      decoration: const InputDecoration(
+                        hintText: " Ask Yuyuan...",
+                        hintStyle: TextStyle(color: Colors.black38),
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                      ),
+                      onSubmitted: _handleSubmitted,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.orange[300],
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: Colors.orange.withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 4))],
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.send, color: Colors.white),
+                    onPressed: () => _handleSubmitted(_textController.text),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
   }
-}
-
-// 🔥 保留你的三角形 Painter
-class TrianglePainter extends CustomPainter {
-  final Color color;
-  TrianglePainter({required this.color});
-  @override
-  void paint(Canvas canvas, Size size) {
-    var paint = Paint()..color = color;
-    var path = Path();
-    // 這裡我稍微調整了三角形方向，讓它看起來是從氣泡下面長出來的
-    path.moveTo(0, 0); 
-    path.lineTo(size.width, 0);
-    path.lineTo(size.width / 2, size.height);
-    path.close();
-    canvas.drawPath(path, paint);
-  }
-  @override
-  bool shouldRepaint(CustomPainter oldDelegate) => false;
 }
