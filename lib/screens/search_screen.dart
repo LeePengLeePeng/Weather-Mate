@@ -1,0 +1,486 @@
+import 'dart:convert';
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_slidable/flutter_slidable.dart';
+import 'package:weather_test/bloc/weather_bloc_bloc.dart';
+import 'package:weather_test/tool/fade_route.dart';
+import 'WeatherPreviewScreen.dart'; 
+
+class CityData {
+  final String name;
+  final double latitude;
+  final double longitude;
+
+  CityData({required this.name, required this.latitude, required this.longitude});
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'latitude': latitude,
+    'longitude': longitude,
+  };
+
+  factory CityData.fromJson(Map<String, dynamic> json) {
+    return CityData(
+      name: json['name'],
+      latitude: json['latitude'],
+      longitude: json['longitude'],
+    );
+  }
+}
+
+class SearchScreen extends StatefulWidget {
+  final VoidCallback? onCitySelected;
+  
+  const SearchScreen({super.key, this.onCitySelected});
+  
+  @override
+  State<SearchScreen> createState() => _SearchScreenState();
+}
+
+class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClientMixin {
+  
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+
+  List<CityData> _searchResults = [];
+  List<CityData> _savedCities = [];
+  bool _isLoading = false;
+  String _errorMessage = '';
+  bool _isFocused = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedCities();
+    _focusNode.addListener(() {
+      setState(() {
+        _isFocused = _focusNode.hasFocus;
+        if (!_isFocused && _controller.text.isEmpty) {
+          _searchResults.clear();
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  bool get wantKeepAlive => true;
+
+  // 🔥【新增】補上缺少的 onChanged 函式
+  void _onSearchChanged(String value) {
+    setState(() {
+      // 這裡主要用來更新 UI (例如顯示/隱藏清除按鈕)
+      // 如果你希望打字時就自動搜尋，可以在這裡加邏輯
+      if (value.isEmpty) {
+        _searchResults.clear();
+      }
+    });
+  }
+
+  // --- 💾 儲存與讀取 ---
+  Future<void> _loadSavedCities() async {
+    final prefs = await SharedPreferences.getInstance();
+    final List<String>? savedStringList = prefs.getStringList('saved_cities');
+    if (savedStringList != null) {
+      setState(() {
+        _savedCities = savedStringList
+            .map((item) => CityData.fromJson(jsonDecode(item)))
+            .toList();
+      });
+    }
+  }
+
+  Future<void> _addCityToSaved(CityData city) async {
+    final exists = _savedCities.any((c) => c.name == city.name);
+    if (exists) return;
+
+    setState(() {
+      _savedCities.insert(0, city);
+    });
+    _saveToPrefs();
+  }
+
+  Future<void> _removeCity(CityData city) async {
+    setState(() {
+      _savedCities.removeWhere((c) => c.name == city.name);
+    });
+    _saveToPrefs();
+  }
+
+  Future<void> _saveToPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    final List<String> stringList = _savedCities
+        .map((city) => jsonEncode(city.toJson()))
+        .toList();
+    await prefs.setStringList('saved_cities', stringList);
+  }
+
+  // --- 📍 抓取目前位置邏輯 ---
+  Future<void> _useCurrentLocation() async {
+    setState(() => _isLoading = true);
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          throw Exception("位置權限被拒絕");
+        }
+      }
+      
+      Position position = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+      
+      if (mounted) {
+        context.read<WeatherBlocBloc>().add(FetchWeather(position));
+        widget.onCitySelected?.call();
+      }
+    } catch (e) {
+      setState(() => _errorMessage = "無法取得目前位置: $e");
+    } finally {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  // --- 🔍 搜尋邏輯 ---
+  Future<void> _searchCity(String query) async {
+    if (query.isEmpty) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+      _searchResults = [];
+    });
+
+    try {
+      List<Location> locations = await locationFromAddress(query);
+      List<CityData> tempResults = [];
+
+      for (var loc in locations) {
+        try {
+          List<Placemark> placemarks = await placemarkFromCoordinates(loc.latitude, loc.longitude);
+          if (placemarks.isNotEmpty) {
+            Placemark p = placemarks.first;
+            String city = p.administrativeArea ?? ''; 
+            String district = p.locality ?? '';       
+            String name = "$city $district".trim();
+            if (name.isEmpty) name = query; 
+
+            if (!tempResults.any((element) => element.name == name)) {
+               tempResults.add(CityData(name: name, latitude: loc.latitude, longitude: loc.longitude));
+            }
+          }
+        } catch (e) { print("反查失敗: $e"); }
+      }
+
+      setState(() {
+        _searchResults = tempResults;
+        if (_searchResults.isEmpty) _errorMessage = "找不到相關地點";
+      });
+
+    } catch (e) {
+      setState(() {
+        _errorMessage = "找不到地點";
+      });
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  // --- 🎨 UI 建構 ---
+  @override
+  Widget build(BuildContext context) {
+    super.build(context); // 🔥 4. 必須呼叫這行！
+
+    // 用 FadeTransition 包住整個頁面，讓它第一次載入時有柔和的淡入感
+    return Scaffold(
+      backgroundColor: Colors.transparent, // 讓底下的共用背景透出來
+      
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        // 建議將狀態列改為亮色模式 (白字)，因為天氣背景通常較深
+        systemOverlayStyle: SystemUiOverlayStyle.light, 
+        
+        leading: IconButton(
+          // 🔥 修改 2: 將箭頭改成白色，避免在深色背景看不見
+          icon: const Icon(Icons.arrow_forward_ios, color: Colors.white),
+          onPressed: () {
+            _focusNode.unfocus();
+            widget.onCitySelected?.call();
+          },
+        ),
+        // 🔥 修改 3: 標題也改成白色
+        title: const Text("管理城市", style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontWeight: FontWeight.bold)),
+      ),
+      
+      // 🔥 修改 4: 內容區域保持原本的 Stack 結構
+      // 這裡的 BackdropFilter 會自動模糊底下的「共用天氣背景」，效果會非常漂亮！
+      body: Stack(
+        children: [
+          // ------------------------------------------------------
+          // Layer A: 全螢幕的淡入模糊遮罩
+          // ------------------------------------------------------
+          Positioned.fill(
+            child: AnimatedOpacity(
+              opacity: (_isFocused || _searchResults.isNotEmpty || _isLoading) ? 1.0 : 0.0,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              child: ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 20.0, sigmaY: 20.0),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,    
+                        end: Alignment.bottomCenter,   
+                        stops: const [0.0, 0.15, 1.0], 
+                        colors: [
+                          // 這裡維持原本的半透明白，這樣搜尋時會有「毛玻璃」效果
+                          Colors.white.withOpacity(0.0), 
+                          Colors.white.withOpacity(0.1),
+                          Colors.white.withOpacity(0.3), 
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ------------------------------------------------------
+          // Layer B: 點擊空白處收起鍵盤
+          // ------------------------------------------------------
+          if (_isFocused || _searchResults.isNotEmpty || _isLoading)
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: () {
+                  _focusNode.unfocus();
+                  setState(() {
+                    if (_searchResults.isEmpty) _controller.clear();
+                  });
+                },
+                child: Container(color: Colors.transparent),
+              ),
+            ),
+
+          // ------------------------------------------------------
+          // Layer C: 真正的內容 (搜尋框 + 列表)
+          // ------------------------------------------------------
+          Column(
+            children: [
+              // 1. 搜尋框區域
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: TextField(
+                  controller: _controller,
+                  focusNode: _focusNode,
+                  style: const TextStyle(color: Colors.black87), // 輸入框內的字維持黑色(因為有白色底)
+                  decoration: InputDecoration(
+                    hintText: '輸入城市名稱 (例如: Taipei)',
+                    hintStyle: TextStyle(color: Colors.grey[600]),
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.5), 
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: BorderSide.none,
+                    ),
+                    suffixIcon: _controller.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, color: Colors.grey),
+                            onPressed: () {
+                              _controller.clear();
+                              setState(() {
+                                _searchResults.clear();
+                                _errorMessage = '';
+                              });
+                            },
+                          )
+                        : null,
+                  ),
+                  onChanged: _onSearchChanged,
+                  onSubmitted: (value) => _searchCity(value),
+                ),
+              ),
+
+              // 2. 列表區域
+              Expanded(
+                child: Stack(
+                  children: [
+                    if (_isLoading)
+                       const Center(child: CircularProgressIndicator(color: Colors.white)),
+                    
+                    if (_errorMessage.isNotEmpty)
+                       Center(child: Text(_errorMessage, style: const TextStyle(color: Colors.white))), // 錯誤訊息改白色比較明顯
+
+                    if (_searchResults.isNotEmpty)
+                      _buildSearchResults()
+                    else if (!_isFocused && _controller.text.isEmpty)
+                      _buildListWithCurrentLocation(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildListWithCurrentLocation() {
+    int totalCount = 1 + _savedCities.length;
+
+    return SlidableAutoCloseBehavior(
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: totalCount,
+        separatorBuilder: (_, __) => const SizedBox(height: 10),
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return Container(
+              decoration: BoxDecoration(
+                color: Colors.blueAccent.withOpacity(0.2), 
+                borderRadius: BorderRadius.circular(15),
+                border: Border.all(color: Colors.blueAccent.withOpacity(0.5), width: 1),
+              ),
+              child: ListTile(
+                leading: const Icon(Icons.my_location, color: Colors.blueAccent),
+                title: const Text("目前位置", style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 18, fontWeight: FontWeight.bold)), // 修正為白色，因為背景深
+                subtitle: const Text("GPS 定位", style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 12)),
+                onTap: _useCurrentLocation, 
+              ),
+            );
+          }
+
+          final city = _savedCities[index - 1]; 
+          
+          return Slidable(
+            key: Key(city.name),
+            groupTag: 'saved_cities_list', 
+            endActionPane: ActionPane(
+              motion: const BehindMotion(), 
+              extentRatio: 0.3, 
+              children: [
+                CustomSlidableAction(
+                  onPressed: (context) => _removeCity(city),
+                  backgroundColor: Colors.transparent, 
+                  foregroundColor: Colors.white,
+                  child: Container(
+                    width: 50, 
+                    height: 50, 
+                    decoration: BoxDecoration(
+                      color: Colors.red, 
+                      borderRadius: BorderRadius.circular(12), 
+                    ),
+                    child: const Icon(Icons.delete, color: Colors.white, size: 28),
+                  ),
+                ),
+              ],
+            ),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.4), // 調整為半透明白
+                borderRadius: BorderRadius.circular(15), 
+                border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
+              ),
+              child: ListTile(
+                title: Text(city.name, style: const TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.bold)), // 調整為深色字
+                trailing: const Icon(Icons.arrow_forward_ios, color: Colors.black54, size: 14), 
+                onTap: () {
+                  context.read<WeatherBlocBloc>().add(FetchWeather(Position(
+                  latitude: city.latitude,
+                  longitude: city.longitude,
+                  timestamp: DateTime.now(),
+                  accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0, isMocked: false
+                )));
+
+                  widget.onCitySelected?.call();
+                },
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // 修改這個方法
+  Widget _buildSearchResults() {
+    return ListView.separated(
+      padding: const EdgeInsets.all(16),
+      itemCount: _searchResults.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      itemBuilder: (context, index) {
+        final city = _searchResults[index];
+        
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.4),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
+          ),
+          child: ListTile(
+            leading: const Icon(Icons.place, color: Colors.blueAccent),
+            title: Text(
+              city.name, 
+              style: const TextStyle(
+                color: Colors.black87,
+                fontSize: 18, 
+                fontWeight: FontWeight.bold
+              )
+            ),
+              onTap: () async {
+                _focusNode.unfocus(); // 收起鍵盤
+                
+                // 🔥 1. 恢復：跳轉到預覽頁面 (使用淡入轉場)
+                final bool? shouldAdd = await Navigator.push(
+                  context,
+                  createFadeRoute(WeatherPreviewScreen(city: city)),
+                );
+
+                if (!mounted) return;
+
+                // 🔥 2. 判斷使用者是否在預覽頁按下了「新增」
+                if (shouldAdd == true) {
+                  // (A) 加入儲存列表
+                  await _addCityToSaved(city);
+
+                  _controller.clear(); 
+                  setState(() {
+                    _searchResults.clear();
+                    _errorMessage = '';
+                  });
+
+                  // (C) 通知 Bloc 更新天氣
+                if (mounted) {
+                  context.read<WeatherBlocBloc>().add(FetchWeather(Position(
+                    latitude: city.latitude,
+                    longitude: city.longitude,
+                    timestamp: DateTime.now(),
+                    accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0, isMocked: false
+                  )));
+                }
+
+                // (D) 呼叫 callback 滑回主頁
+                widget.onCitySelected?.call(); 
+              }
+            },
+          ),
+        );
+      },
+    );
+  }
+}
