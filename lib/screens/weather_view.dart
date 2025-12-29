@@ -1,7 +1,8 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:weather_test/IconPlayer/WeatherIconPlayer.dart'; 
+import 'package:weather_test/IconPlayer/WeatherIconPlayer.dart';
+import 'package:weather_test/data/outfit_recommendation_service.dart'; 
 
 class WeatherView extends StatelessWidget {
   final dynamic weather; 
@@ -144,54 +145,46 @@ class WeatherView extends StatelessWidget {
   }
 
   // --- 5. 穿著建議邏輯 ---
-  Map<String, dynamic> _getOutfitRecommendation() {
-    final int temp = weather.temperature.round();
-    final int code = weather.conditionCode;
-    final bool isRaining = code >= 200 && code < 600;
-    
-    String suggestion = '';
-    List<String> clothingItems = []; // 儲存服裝圖片路徑
-    
-    if (isRaining) {
-      suggestion = '今天會下雨,記得帶傘並穿防水外套';
-      clothingItems.add('assets/outfit/umbrella.png');
-      
-      if (temp >= 25) {
-        clothingItems.addAll(['assets/outfit/tshirt.png', 'assets/outfit/shorts.png']);
-      } else if (temp >= 20) {
-        clothingItems.addAll(['assets/outfit/tshirt.png', 'assets/outfit/jeans.png', 'assets/outfit/light_jacket.png']);
-      } else if (temp >= 15) {
-        clothingItems.addAll(['assets/outfit/hoodie.png', 'assets/outfit/jeans.png']);
-      } else {
-        clothingItems.addAll(['assets/outfit/coat.png', 'assets/outfit/jeans.png', 'assets/outfit/scarf.png']);
-      }
-    } else {
-      // 非雨天的穿著建議
-      if (temp >= 30) {
-        suggestion = '天氣炎熱,穿著短袖短褲並做好防曬';
-        clothingItems.addAll(['assets/outfit/tshirt.png', 'assets/outfit/shorts.png', 'assets/outfit/sunglasses.png', 'assets/outfit/cap.png']);
-      } else if (temp >= 25) {
-        suggestion = '天氣溫暖舒適,輕便服裝即可';
-        clothingItems.addAll(['assets/outfit/tshirt.png', 'assets/outfit/shorts.png']);
-      } else if (temp >= 20) {
-        suggestion = '早晚稍涼,建議攜帶薄外套';
-        clothingItems.addAll(['assets/outfit/tshirt.png', 'assets/outfit/jeans.png', 'assets/outfit/light_jacket.png']);
-      } else if (temp >= 15) {
-        suggestion = '天氣轉涼,請穿著長袖與外套';
-        clothingItems.addAll(['assets/outfit/hoodie.png', 'assets/outfit/jeans.png']);
-      } else if (temp >= 10) {
-        suggestion = '天氣寒冷,需要厚外套與圍巾';
-        clothingItems.addAll(['assets/outfit/coat.png', 'assets/outfit/jeans.png', 'assets/outfit/scarf.png']);
-      } else {
-        suggestion = '寒流來襲!請穿著羽絨外套並戴手套';
-        clothingItems.addAll(['assets/outfit/down_jacket.png', 'assets/outfit/jeans.png', 'assets/outfit/scarf.png', 'assets/outfit/gloves.png']);
-      }
-    }
-    
-    return {
-      'suggestion': suggestion,
-      'items': clothingItems,
-    };
+  OutfitRecommendation _getOutfitRecommendation() {
+    return OutfitRecommendationService.getRecommendation(
+      temperature: weather.temperature.round(),
+      conditionCode: weather.conditionCode,
+      humidity: weather.humidity.round(),
+      windSpeed: weather.windSpeed,
+      feelsLike: weather.feelsLike?.round(),
+      latitude: weather.latitude,   // 需要在 WeatherModel 中加入
+      longitude: weather.longitude, // 需要在 WeatherModel 中加入
+    );
+  }
+
+  Widget _buildRegionIndicator(ClimateRegion region) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withOpacity(0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            OutfitRecommendationService.getRegionIcon(region),
+            size: 16,
+            color: const Color.fromARGB(200, 57, 57, 57),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            OutfitRecommendationService.getRegionName(region),
+            style: const TextStyle(
+              fontSize: 12,
+              color: Color.fromARGB(200, 57, 57, 57),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
     String formatDayLabel(DateTime date) {
@@ -215,7 +208,7 @@ class WeatherView extends StatelessWidget {
   Widget build(BuildContext context) {
 
     final weatherIcon = getWeatherIcon(weather.conditionCode);
-    final outfitData = _getOutfitRecommendation();
+    final OutfitRecommendation outfitData = _getOutfitRecommendation();
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
@@ -499,14 +492,33 @@ class WeatherView extends StatelessWidget {
                 ),
                 const SizedBox(height: 30),
 
-                const Text('OUTFIT SUGGESTION', style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 1.2)),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      'OUTFIT SUGGESTION',
+                      style: TextStyle(
+                        color: Color.fromARGB(255, 57, 57, 57),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                    // 🔥 新增：氣候區域標籤
+                   _buildRegionIndicator(outfitData.region),
+                  ],
+                ),
                 const SizedBox(height: 10),
+                
                 Container(
                   padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.25),
                     borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: Colors.white.withOpacity(0.4), width: 1.5),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.4),
+                      width: 1.5,
+                    ),
                   ),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(20),
@@ -522,14 +534,26 @@ class WeatherView extends StatelessWidget {
                               children: [
                                 const Row(
                                   children: [
-                                    Icon(Icons.checkroom, size: 20, color: Color.fromARGB(200, 57, 57, 57)),
+                                    Icon(
+                                      Icons.checkroom,
+                                      size: 20,
+                                      color: Color.fromARGB(200, 57, 57, 57),
+                                    ),
                                     SizedBox(width: 8),
-                                    Text('今日穿搭建議', style: TextStyle(color: Color.fromARGB(200, 57, 57, 57), fontSize: 14, fontWeight: FontWeight.w600)),
+                                    Text(
+                                      '今日穿搭建議',
+                                      style: TextStyle(
+                                        color: Color.fromARGB(200, 57, 57, 57),
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 12),
+                                // 🔥 使用服務回傳的建議
                                 Text(
-                                  outfitData['suggestion'],
+                                  outfitData.suggestion,
                                   style: const TextStyle(
                                     color: Color.fromARGB(255, 57, 57, 57),
                                     fontSize: 16,
@@ -549,7 +573,7 @@ class WeatherView extends StatelessWidget {
                               spacing: 8,
                               runSpacing: 8,
                               alignment: WrapAlignment.center,
-                              children: (outfitData['items'] as List<String>).map((item) {
+                              children: outfitData.clothingItems.map((item) {
                                 return Container(
                                   width: 50,
                                   height: 50,
@@ -563,7 +587,7 @@ class WeatherView extends StatelessWidget {
                                       item,
                                       fit: BoxFit.contain,
                                       errorBuilder: (context, error, stackTrace) {
-                                        // 如果圖片不存在,顯示預設圖示
+                                        // 讀取失敗時顯示的備用 icon
                                         return const Icon(
                                           Icons.checkroom,
                                           size: 30,
@@ -590,9 +614,9 @@ class WeatherView extends StatelessWidget {
 
                 // 第三排:最高溫 & 最低溫
                 Row(children: [
-                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: 'TEMP MAX', value: '${weather.tempMax.round()}°C')),
-                  const SizedBox(width: 10),
                   Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: 'TEMP MIN', value: '${weather.tempMin.round()}°C')),
+                  const SizedBox(width: 10),
+                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: 'TEMP MAX', value: '${weather.tempMax.round()}°C')),
                 ]),
                 
                 const SizedBox(height: 10),

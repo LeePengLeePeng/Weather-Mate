@@ -17,6 +17,8 @@ class DailyWeather {
 
 // 2. 修改原本的 Model
 class WeatherModel {
+  final double? latitude;
+  final double? longitude; 
   final double temperature;    // 溫度
   final double tempMax;        // 最高溫 (今天的)
   final double tempMin;        // 最低溫 (今天的)
@@ -39,10 +41,12 @@ class WeatherModel {
   final String? comfort;          // 舒適度指數
   final String? windDirection;    // 風向
   final String? weatherForecast;  // 天氣預報綜合描述
-
+  
   final List<DailyWeather> dailyForecasts; 
 
   WeatherModel({
+    required this.latitude,
+    required this.longitude,
     required this.temperature,
     required this.tempMax,
     required this.tempMin,
