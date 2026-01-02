@@ -48,6 +48,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  flutter_launcher_icons: ^0.13.1
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -69,6 +70,8 @@ flutter:
   
   assets:
     - assets/
+    - assets/icon/
+    - assets/outfit/
     - .env
 
   # To add assets to your application, add an assets section, like this:
@@ -101,3 +104,8 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+flutter_launcher_icons:
+  android: "launcher_icon" # Android 圖示的檔案名稱 (通常不用改)
+  ios: true                # 是否要產生 iOS 圖示
+  image_path: "assets/icon/icon.png" # 你的圖片路徑
+  min_sdk_android: 21      # 建議加上，確保相容性

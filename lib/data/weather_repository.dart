@@ -762,7 +762,11 @@ class WeatherRepository {
         double minT = temps.reduce((a, b) => a < b ? a : b);
         final wxText = dayWx[k] ?? '多雲';
         // 使用預設值，避免 null
-        final pop = dayPop[k] ?? 0;
+        int pop = dayPop[k] ?? 0;
+        // 如果機率是 0 但文字描述有雨，就用你寫的函式去推算
+        if (pop == 0 && wxText.contains('雨')) {
+          pop = _estimateRainFromWx(wxText);
+        }
 
         dailyForecasts.add(DailyWeather(
           date: date,
@@ -822,8 +826,11 @@ class WeatherRepository {
           int pop = (i < cwaHourlyRainChance.length) ? cwaHourlyRainChance[i] : 0;
 
           if (hourlyWxText.contains('雨') && pop == 0) {
-            pop = 15;
-            if (i < cwaHourlyRainChance.length) cwaHourlyRainChance[i] = 15;
+            // 不要寫死 15，改用推算的
+            pop = _estimateRainFromWx(hourlyWxText); 
+            
+            // 這一行記得保留，這樣才能更新陣列
+            if (i < cwaHourlyRainChance.length) cwaHourlyRainChance[i] = pop;
           }
 
           int code = decideConditionCode(hourlyWxText, pop);
