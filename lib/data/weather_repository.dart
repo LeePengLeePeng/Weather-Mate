@@ -515,65 +515,96 @@ class WeatherRepository {
     }
 
     print("📊 基礎數值解析: 溫=$currentTemp, 濕=$humidity, 風=$windSpeed, 況=$wx");
+    
 
     // ===========================================================
     // 解析 CWA tempPoints
     // ===========================================================
     List<MapEntry<DateTime, double>> tempPoints = [];
-    try {
-      var tempNode = weatherElements.firstWhere(
-        (e) => ['T', '溫度'].contains(_safeGet(e, 'ElementName')),
-        orElse: () => null,
-      );
-      if (tempNode != null) {
-        var timeList = _safeGetList(tempNode, 'Time');
-        tempPoints = _parseCwaTempPoints(timeList);
-      }
-    } catch (_) {}
-
-    // 逐時溫度
-    List<double> cwaHourlyTemps = [];
-    if (tempPoints.isNotEmpty) {
-      final now = DateTime.now();
-      final future = tempPoints.where((p) => !p.key.isBefore(now)).toList();
-      cwaHourlyTemps = future.take(24).map((p) => p.value).toList();
-    }
-    if (cwaHourlyTemps.isEmpty) cwaHourlyTemps = List.filled(24, currentTemp);
-    while (cwaHourlyTemps.length < 24) cwaHourlyTemps.add(cwaHourlyTemps.last);
-    if (cwaHourlyTemps.length > 24) cwaHourlyTemps = cwaHourlyTemps.sublist(0, 24);
-
-    // 逐時降雨
-    List<int> cwaHourlyRainChance = [];
-    int currentRainChance = 0;
-    try {
-      var pop3hNode = weatherElements.firstWhere(
-        (e) => ['PoP3h', '3小時降雨機率'].contains(_safeGet(e, 'ElementName')),
-        orElse: () => null,
-      );
-      if (pop3hNode != null) {
-        var timeList = _safeGetList(pop3hNode, 'Time');
-        cwaHourlyRainChance = expandPoP3hToHourly(timeList);
-        if (cwaHourlyRainChance.length > 24) {
-          cwaHourlyRainChance = cwaHourlyRainChance.sublist(0, 24);
+      try {
+        var tempNode = weatherElements.firstWhere(
+          (e) => ['T', '溫度'].contains(_safeGet(e, 'ElementName')),
+          orElse: () => null,
+        );
+        if (tempNode != null) {
+          var timeList = _safeGetList(tempNode, 'Time');
+          tempPoints = _parseCwaTempPoints(timeList);
         }
-        if (wx.contains('雨') && cwaHourlyRainChance.isNotEmpty) {
-          int estimatedPop = _estimateRainFromWx(wx);
-          for (int i = 0; i < 3 && i < cwaHourlyRainChance.length; i++) {
-            if (cwaHourlyRainChance[i] == 0) {
-              cwaHourlyRainChance[i] = estimatedPop;
+      } catch (_) {}
+
+      // 逐時溫度
+      List<double> cwaHourlyTemps = [];
+      if (tempPoints.isNotEmpty) {
+        final now = DateTime.now();
+        final future = tempPoints.where((p) => !p.key.isBefore(now)).toList();
+        cwaHourlyTemps = future.take(24).map((p) => p.value).toList();
+      }
+      if (cwaHourlyTemps.isEmpty) cwaHourlyTemps = List.filled(24, currentTemp);
+      while (cwaHourlyTemps.length < 24) cwaHourlyTemps.add(cwaHourlyTemps.last);
+      if (cwaHourlyTemps.length > 24) cwaHourlyTemps = cwaHourlyTemps.sublist(0, 24);
+
+      // 逐時降雨
+      List<int> cwaHourlyRainChance = [];
+      int currentRainChance = 0;
+
+      List<bool> wasModified = List.filled(24, false);
+
+      try {
+        var pop3hNode = weatherElements.firstWhere(
+          (e) => ['PoP3h', '3小時降雨機率'].contains(_safeGet(e, 'ElementName')),
+          orElse: () => null,
+        );
+        
+        if (pop3hNode != null) {
+          var timeList = _safeGetList(pop3hNode, 'Time');
+          cwaHourlyRainChance = expandPoP3hToHourly(timeList);
+          
+          if (cwaHourlyRainChance.length > 24) {
+            cwaHourlyRainChance = cwaHourlyRainChance.sublist(0, 24);
+          }
+          
+          if (wx.contains('雨') && cwaHourlyRainChance.isNotEmpty) {
+            // 檢查前 3 小時是否都是 0
+            bool allZero = true;
+            for (int i = 0; i < 3 && i < cwaHourlyRainChance.length; i++) {
+              if (cwaHourlyRainChance[i] > 0) {
+                allZero = false;
+                break;
+              }
             }
           }
+          
+          // ✅ 顯示最終的 24 小時降雨機率（標示來源）
+          final now = DateTime.now();
+          for (int i = 0; i < 24 && i < cwaHourlyRainChance.length; i++) {
+            final time = now.add(Duration(hours: i));
+            final timeStr = DateFormat('MM/dd HH:mm').format(time);
+            final pop = cwaHourlyRainChance[i];
+            final source = wasModified[i] ? '[推估]' : '[CWA]';
+          }
+          
+          if (cwaHourlyRainChance.isNotEmpty) {
+            currentRainChance = cwaHourlyRainChance.first;
+          }
         }
-        if (cwaHourlyRainChance.isNotEmpty) {
-          currentRainChance = cwaHourlyRainChance.first;
-        }
+      } catch (e) {
+        print("❌ PoP3h 解析失敗: $e");
       }
-    } catch (e) {
-      print("   ❌ PoP3h 解析失敗: $e");
-    }
-    if (cwaHourlyRainChance.isEmpty) cwaHourlyRainChance = List.filled(24, 0);
-    if (cwaHourlyRainChance.isNotEmpty) currentRainChance = cwaHourlyRainChance.first;
-    if (wx.contains('雨') && currentRainChance == 0) currentRainChance = 15;
+
+      // 預設值處理
+      if (cwaHourlyRainChance.isEmpty) {
+        cwaHourlyRainChance = List.filled(24, 0);
+      }
+
+      if (cwaHourlyRainChance.isNotEmpty) {
+        currentRainChance = cwaHourlyRainChance.first;
+      }
+
+      // 最後的安全檢查：如果天氣明確說有雨但機率還是 0
+      if (wx.contains('雨') && currentRainChance == 0) {
+        currentRainChance = _estimateRainFromWx(wx);
+        print("⚠️ 最終安全檢查：天氣「$wx」但降雨=0，調整為 $currentRainChance%");
+      }
 
     int openWeatherMapCode = decideConditionCode(wx, currentRainChance);
 
@@ -994,13 +1025,31 @@ class WeatherRepository {
   }
 
   int _estimateRainFromWx(String wxText) {
-    if (wxText.contains('雷雨') || wxText.contains('大雨')) return 80;
-    if (wxText.contains('陣雨') || wxText.contains('短暫雨')) return 60;
-    if (wxText.contains('雨')) return 50;
-    if (wxText.contains('多雲') || wxText.contains('陰')) return 20;
-    if (wxText.contains('晴')) return 10;
-    return 15;
+    // 更精細的降雨機率估算
+    if (wxText.contains('雷雨') || wxText.contains('大雨') || wxText.contains('豪雨')) {
+      return 85;  // 強降雨
+    }
+    if (wxText.contains('陣雨')) {
+      return 65;  // 陣雨：局部性但較強
+    }
+    if (wxText.contains('短暫雨')) {
+      return 40;  // 短暫雨：時間短、範圍小
+    }
+    if (wxText.contains('雨')) {
+      return 55;  // 一般降雨
+    }
+    if (wxText.contains('多雲時陰')) {
+      return 25;  // 可能下雨
+    }
+    if (wxText.contains('多雲') || wxText.contains('陰')) {
+      return 15;  // 不太會下雨
+    }
+    if (wxText.contains('晴')) {
+      return 5;   // 幾乎不會下雨
+    }
+    return 10;  // 預設值
   }
+
 
   int decideConditionCode(String wx, int pop) {
     if (wx.contains('雷')) return 200;
