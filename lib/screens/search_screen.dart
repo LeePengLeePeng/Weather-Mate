@@ -173,6 +173,16 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   Future<void> _searchCity(String query) async {
     if (query.isEmpty) return;
     
+    // ✅ 過濾掉注音符號
+    if (_containsBopomofo(query)) {
+      setState(() {
+        _errorMessage = "請輸入中文或英文城市名稱";
+        _isLoading = false;
+        _searchResults = [];
+      });
+      return;
+    }
+    
     setState(() {
       _isLoading = true;
       _errorMessage = '';
@@ -181,6 +191,12 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
 
     try {
       List<String> searchQueries = _generateSearchVariations(query);
+      
+      // ✅ 去除重複的搜尋詞
+      searchQueries = searchQueries.toSet().toList();
+      
+      debugPrint("🔍 將搜尋 ${searchQueries.length} 個變體: $searchQueries");
+      
       List<Location> allLocations = [];
       
       for (int i = 0; i < searchQueries.length; i += 5) {
@@ -189,10 +205,13 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
         
         List<Future<List<Location>>> searches = batch.map((q) {
           return locationFromAddress(q).timeout(
-            const Duration(seconds: 3),
-            onTimeout: () => <Location>[],
+            const Duration(seconds: 8),
+            onTimeout: () {
+              debugPrint("⏱️ 搜尋 '$q' 超時");
+              return <Location>[];
+            },
           ).catchError((e) {
-            debugPrint("搜尋 '$q' 失敗: $e");
+            debugPrint("❌ 搜尋 '$q' 失敗: $e");
             return <Location>[];
           });
         }).toList();
@@ -202,14 +221,17 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           allLocations.addAll(results);
         }
         
-        if (allLocations.length >= 10) break;
+        if (allLocations.length >= 20) break;
       }
 
       if (allLocations.isEmpty) {
-        setState(() {
-          _errorMessage = "找不到「$query」相關地點";
-          _isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _errorMessage = "找不到「$query」相關地點";
+            _isLoading = false;
+            _searchResults = [];
+          });
+        }
         return;
       }
 
@@ -217,15 +239,18 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       int processedCount = 0;
       
       for (var loc in allLocations) {
-        if (processedCount >= 15) break;
+        if (processedCount >= 30) break;
         
         try {
           List<Placemark> placemarks = await placemarkFromCoordinates(
             loc.latitude, 
             loc.longitude
           ).timeout(
-            const Duration(seconds: 2),
-            onTimeout: () => <Placemark>[],
+            const Duration(seconds: 5),
+            onTimeout: () {
+              debugPrint("⏱️ 解析座標超時");
+              return <Placemark>[];
+            },
           );
           
           if (placemarks.isEmpty) continue;
@@ -261,18 +286,21 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           
           processedCount++;
         } catch (e) {
-          debugPrint("解析地區失敗: $e");
+          debugPrint("❌ 解析地址失敗: $e");
         }
       }
 
       List<CityData> filteredResults = uniqueLocations.values
-          .where((city) => _isMatchingCity(city.name, query))
-          .toList();
-      
+        .where((city) => _isMatchingCity(city.name, query))
+        .toList();
+    
       if (filteredResults.isEmpty && uniqueLocations.isNotEmpty) {
         bool isCountryQuery = _isCountryQuery(query);
-        if (isCountryQuery || _isEnglish(query)) {
-          debugPrint("⚠️ 查詢無匹配結果，顯示所有找到的地點");
+        bool isEnglishQuery = _isEnglish(query);
+        bool isProbablyCountry = query.length <= 4 && !_isEnglish(query);
+        
+        if (isCountryQuery || isEnglishQuery || isProbablyCountry) {
+          debugPrint("⚠️ 查詢無匹配結果,顯示所有找到的地點");
           filteredResults = uniqueLocations.values.toList();
         }
       }
@@ -289,8 +317,11 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       if (mounted) {
         setState(() {
           _searchResults = filteredResults;
-          if (_searchResults.isEmpty) {
-            _errorMessage = "找不到「$query」相關地點";
+          _isLoading = false;
+          _errorMessage = filteredResults.isEmpty ? "找不到「$query」相關地點" : '';
+          
+          if (_searchResults.isNotEmpty) {
+            debugPrint("✅ 找到 ${_searchResults.length} 個結果");
           }
         });
       }
@@ -298,14 +329,12 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = "搜尋發生錯誤，請稍後再試";
+          _errorMessage = "搜尋發生錯誤,請稍後再試";
+          _isLoading = false;
+          _searchResults = [];
         });
       }
-      debugPrint("搜尋錯誤: $e");
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      debugPrint("❌ 搜尋錯誤: $e");
     }
   }
 
@@ -326,41 +355,104 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     return '$country-$administrativeArea-$locality';
   }
 
+  // ✅ 新增：檢測注音符號
+  bool _containsBopomofo(String text) {
+    return RegExp(r'[\u3105-\u312F\u31A0-\u31BF]').hasMatch(text);
+  }
+
   List<String> _generateSearchVariations(String query) {
     List<String> variations = [];
+    String lowerQuery = query.toLowerCase().trim();
+    
+    // ✅ 優先檢查是否為已知城市/國家
+    Map<String, String> knownPlaces = _getKnownPlaceMapping();
+    
+    if (knownPlaces.containsKey(lowerQuery)) {
+      variations.add(knownPlaces[lowerQuery]!);
+      return variations;
+    }
+    
     variations.add(query);
     
     if (_isEnglish(query)) {
-      List<String> knownVariations = _getAllCityNameVariations(query.toLowerCase());
-      if (knownVariations.length > 1) {
-        variations.add(knownVariations[0]);
-        bool isCountryName = ['canada', 'japan', 'china', 'usa', 'uk', 'france', 'australia'].contains(query.toLowerCase());
-        if (!isCountryName) {
-          variations.add('${knownVariations[0]}, USA');
-          variations.add('${knownVariations[0]}, UK');
-          variations.add('${knownVariations[0]}, Japan');
-          variations.add('${knownVariations[0]}, Canada');
-        }
-      } else {
+      // 英文查詢
+      List<String> cityVariations = _getAllCityNameVariations(lowerQuery);
+      
+      if (cityVariations.length > 1) {
+        variations.addAll(cityVariations);
+      }
+      
+      // 如果是完整單字且不是國家名,加上常見國家
+      bool isCountryName = _isCountryQuery(query);
+      if (!isCountryName && query.length > 2) {
         variations.add('$query, USA');
         variations.add('$query, Canada');
         variations.add('$query, UK');
-        variations.add('$query, Australia');
-        variations.add('$query, Japan');
       }
     } else {
-      variations.add('${query}市');
-      variations.add('${query}區');
-      variations.add('台灣$query');
-      variations.add('$query Japan');
-      variations.add('日本$query');
-      variations.add('$query China');
-      variations.add('$query Canada');
+      // 中文查詢
+      if (query.length <= 2) {
+        // 短查詢(如「加」「日」)可能是國家簡稱
+        variations.add(query);
+        
+        // 嘗試加上「國」
+        if (!query.contains('國')) {
+          variations.add('${query}國');
+        }
+      } else if (query.length <= 4) {
+        // 中等長度(如「班夫」「京都」)
+        variations.add(query);
+        
+        if (!query.contains('市') && !query.contains('區') && !query.contains('縣')) {
+          variations.add('${query}市');
+        }
+        
+        // 嘗試主要國家
+        variations.add('$query Japan');
+        variations.add('$query Canada');
+        variations.add('台灣$query');
+      } else {
+        // 長查詢
+        variations.add(query);
+        variations.add('${query}市');
+        variations.add('台灣$query');
+        variations.add('$query Japan');
+        variations.add('$query China');
+      }
     }
     
     return variations;
   }
-
+  
+  // ✅ 新增：常見城市/國家對應表
+  Map<String, String> _getKnownPlaceMapping() {
+    return {
+      '加': 'Canada',
+      '美': 'United States',
+      '日': 'Japan',
+      '英': 'United Kingdom',
+      '法': 'France',
+      '德': 'Germany',
+      '加拿大': 'Canada',
+      '美國': 'United States',
+      '日本': 'Japan',
+      '英國': 'United Kingdom',
+      '法國': 'France',
+      '德國': 'Germany',
+      '班夫': 'Banff, Canada',
+      '紐約': 'New York',
+      '東京': 'Tokyo',
+      '京都': 'Kyoto',
+      '大阪': 'Osaka',
+      '巴黎': 'Paris',
+      '倫敦': 'London',
+      '雪梨': 'Sydney',
+      '墨爾本': 'Melbourne',
+      '多倫多': 'Toronto',
+      '溫哥華': 'Vancouver',
+    };
+  }
+  
   bool _isMatchingCity(String cityName, String query) {
     String lowerCityName = cityName.toLowerCase();
     String lowerQuery = query.toLowerCase();
@@ -401,6 +493,8 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       'newyork': ['New York', 'newyork', '紐約', '纽约'],
       'new york': ['New York', 'newyork', '紐約', '纽约'],
       'tokyo': ['Tokyo', '東京', '东京'],
+      'kyoto': ['Kyoto', '京都'],
+      'osaka': ['Osaka', '大阪'],
       'beijing': ['Beijing', '北京'],
       'shanghai': ['Shanghai', '上海'],
       'hongkong': ['Hong Kong', 'hongkong', '香港'],
@@ -419,6 +513,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       'toronto': ['Toronto', '多倫多', '多伦多'],
       'vancouver': ['Vancouver', '溫哥華', '温哥华'],
       'montreal': ['Montreal', '蒙特婁', '蒙特利尔'],
+      'banff': ['Banff', '班夫'],
       'canada': ['Canada', '加拿大'],
     };
     
@@ -432,13 +527,20 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   bool _isCountryQuery(String query) {
     String lowerQuery = query.toLowerCase();
     List<String> countries = [
-      'canada', '加拿大',
-      'japan', '日本',
+      'canada', '加拿大', '加',
+      'japan', '日本', '日',
       'china', '中國', '中国',
-      'usa', 'america', '美國', '美国',
-      'uk', 'britain', '英國', '英国',
-      'france', '法國', '法国',
+      'usa', 'america', '美國', '美国', '美',
+      'uk', 'britain', '英國', '英国', '英',
+      'france', '法國', '法国', '法',
       'australia', '澳大利亞', '澳大利亚',
+      'switzerland', '瑞士',
+      'germany', '德國', '德国', '德',
+      'italy', '意大利', '義大利',
+      'spain', '西班牙',
+      'korea', '韓國', '韩国',
+      'thailand', '泰國', '泰国',
+      'vietnam', '越南',
     ];
     
     return countries.contains(lowerQuery);
@@ -594,7 +696,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                   focusNode: _focusNode,
                   style: const TextStyle(color: Colors.black87),
                   decoration: InputDecoration(
-                    hintText: '輸入城市名稱（例如：台北）',
+                    hintText: '輸入城市名稱(例如:台北)',
                     hintStyle: TextStyle(color: Colors.grey[600]),
                     prefixIcon: const Icon(Icons.search, color: Colors.grey),
                     filled: true,

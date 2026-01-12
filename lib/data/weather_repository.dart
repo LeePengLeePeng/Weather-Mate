@@ -250,6 +250,14 @@ class WeatherRepository {
     List<int> hourlyRainChances = [];
     List<int> hourlyCodes = [];
 
+    double currentTemp = current.temperature?.celsius ?? 0;
+    int currentPop = _calculateRainChanceFromOWMCode(current.weatherConditionCode ?? 800);
+    String currentDesc = current.weatherDescription ?? "";
+    
+    hourlyTemps.add(currentTemp);
+    hourlyRainChances.add(currentPop);
+    hourlyCodes.add(hourlyIconFromWxAndPop(currentDesc, currentPop));
+
     for (var w in forecast.take(8)) {
       double temp = w.temperature?.celsius ?? 0;
       int pop = _calculateRainChanceFromOWMCode(w.weatherConditionCode ?? 800);
@@ -306,9 +314,7 @@ class WeatherRepository {
     final prefs = await SharedPreferences.getInstance();
     final cityName = current.areaName ?? "unknown";
     final tempManager = DailyTempManager(prefs, 'owm', cityKey: cityName);
-    
-    double currentTemp = current.temperature?.celsius ?? 0;
-    
+        
     // 3. 獲取緩存的溫度（這裡可能會拿到當前溫度作為預設值）
     final todayMinMax = await tempManager.getTodayMinMax(currentTemp);
     
@@ -371,8 +377,6 @@ class WeatherRepository {
         conditionCode: representative.weatherConditionCode ?? 800,
       ));
     }
-
-    int currentPop = _calculateRainChanceFromOWMCode(current.weatherConditionCode ?? 800);
 
     return WeatherModel(
       latitude: lat,
@@ -536,18 +540,20 @@ class WeatherRepository {
       List<double> cwaHourlyTemps = [];
       if (tempPoints.isNotEmpty) {
         final now = DateTime.now();
+        cwaHourlyTemps.add(currentTemp);
         final future = tempPoints.where((p) => !p.key.isBefore(now)).toList();
-        cwaHourlyTemps = future.take(24).map((p) => p.value).toList();
+        for (var point in future) {
+          if (cwaHourlyTemps.length >= 24) break;
+          cwaHourlyTemps.add(point.value);
+        }
       }
       if (cwaHourlyTemps.isEmpty) cwaHourlyTemps = List.filled(24, currentTemp);
       while (cwaHourlyTemps.length < 24) cwaHourlyTemps.add(cwaHourlyTemps.last);
       if (cwaHourlyTemps.length > 24) cwaHourlyTemps = cwaHourlyTemps.sublist(0, 24);
 
       // 逐時降雨
-      List<int> cwaHourlyRainChance = [];
+     List<int> cwaHourlyRainChance = [];
       int currentRainChance = 0;
-
-      List<bool> wasModified = List.filled(24, false);
 
       try {
         var pop3hNode = weatherElements.firstWhere(
@@ -557,34 +563,36 @@ class WeatherRepository {
         
         if (pop3hNode != null) {
           var timeList = _safeGetList(pop3hNode, 'Time');
-          cwaHourlyRainChance = expandPoP3hToHourly(timeList);
+          final now = DateTime.now();
           
-          if (cwaHourlyRainChance.length > 24) {
-            cwaHourlyRainChance = cwaHourlyRainChance.sublist(0, 24);
-          }
-          
-          if (wx.contains('雨') && cwaHourlyRainChance.isNotEmpty) {
-            // 檢查前 3 小時是否都是 0
-            bool allZero = true;
-            for (int i = 0; i < 3 && i < cwaHourlyRainChance.length; i++) {
-              if (cwaHourlyRainChance[i] > 0) {
-                allZero = false;
-                break;
+          // ✅ 先找出「當前時段」的降雨機率
+          for (var item in timeList) {
+            final startStr = _safeGet(item, 'StartTime')?.toString() ?? '';
+            final endStr = _safeGet(item, 'EndTime')?.toString() ?? '';
+            
+            final start = DateTime.tryParse(startStr);
+            final end = DateTime.tryParse(endStr);
+            
+            if (start != null && end != null) {
+              // 如果「現在」落在這個時段內
+              if (!now.isBefore(start) && now.isBefore(end)) {
+                var valList = _safeGetList(item, 'ElementValue');
+                if (valList.isEmpty) valList = _safeGetList(item, 'elementValue');
+                
+                if (valList.isNotEmpty) {
+                  final raw = _readCwaValue(valList[0]) ?? '0';
+                  currentRainChance = int.tryParse(raw) ?? 0;
+                  break;
+                }
               }
             }
           }
           
-          // ✅ 顯示最終的 24 小時降雨機率（標示來源）
-          final now = DateTime.now();
-          for (int i = 0; i < 24 && i < cwaHourlyRainChance.length; i++) {
-            final time = now.add(Duration(hours: i));
-            final timeStr = DateFormat('MM/dd HH:mm').format(time);
-            final pop = cwaHourlyRainChance[i];
-            final source = wasModified[i] ? '[推估]' : '[CWA]';
-          }
+          // ✅ 展開成 24 小時（第一筆會是當前時段的機率）
+          cwaHourlyRainChance = expandPoP3hToHourly(timeList);
           
-          if (cwaHourlyRainChance.isNotEmpty) {
-            currentRainChance = cwaHourlyRainChance.first;
+          if (cwaHourlyRainChance.length > 24) {
+            cwaHourlyRainChance = cwaHourlyRainChance.sublist(0, 24);
           }
         }
       } catch (e) {
@@ -603,6 +611,10 @@ class WeatherRepository {
       // 最後的安全檢查：如果天氣明確說有雨但機率還是 0
       if (wx.contains('雨') && currentRainChance == 0) {
         currentRainChance = _estimateRainFromWx(wx);
+        // ✅ 同時更新第一筆
+        if (cwaHourlyRainChance.isNotEmpty) {
+          cwaHourlyRainChance[0] = currentRainChance;
+        }
         print("⚠️ 最終安全檢查：天氣「$wx」但降雨=0，調整為 $currentRainChance%");
       }
 
@@ -1072,28 +1084,48 @@ class WeatherRepository {
 
   List<int> expandPoP3hToHourly(List timeList) {
     List<int> hourly = [];
-    List<int> popValues = [];
-
+    final now = DateTime.now();
+    final currentHour = DateTime(now.year, now.month, now.day, now.hour);
+    
+    // 建立一個 Map: 時間 -> 降雨機率
+    Map<DateTime, int> popMap = {};
+    
     for (var item in timeList) {
-      var valList = item['ElementValue'] ?? item['elementValue'] ?? [];
-      if (valList is List && valList.isNotEmpty) {
-        final raw = _readCwaValue(valList[0]) ?? '0';
-        popValues.add(int.tryParse(raw) ?? 0);
+      final startStr = _safeGet(item, 'StartTime')?.toString() ?? '';
+      final start = DateTime.tryParse(startStr);
+      
+      if (start != null) {
+        var valList = item['ElementValue'] ?? item['elementValue'] ?? [];
+        if (valList is List && valList.isNotEmpty) {
+          final raw = _readCwaValue(valList[0]) ?? '0';
+          final pop = int.tryParse(raw) ?? 0;
+          popMap[start] = pop;
+        }
       }
     }
-
-    if (popValues.isEmpty) return List.filled(24, 0);
-
-    for (int pop in popValues) {
-      for (int h = 0; h < 3; h++) {
-        if (hourly.length < 24) hourly.add(pop);
+    
+    // ✅ 從「當前整點」開始，依序找未來 24 小時
+    for (int i = 0; i < 24; i++) {
+      final targetHour = currentHour.add(Duration(hours: i));
+      
+      // 找出這個小時對應的 3 小時區間
+      int? pop;
+      for (var entry in popMap.entries) {
+        if (!targetHour.isBefore(entry.key) && 
+            targetHour.isBefore(entry.key.add(const Duration(hours: 3)))) {
+          pop = entry.value;
+          break;
+        }
       }
+      
+      // 如果沒找到，用上一筆或預設值
+      if (pop == null) {
+        pop = hourly.isEmpty ? 0 : hourly.last;
+      }
+      
+      hourly.add(pop);
     }
-
-    while (hourly.length < 24) {
-      hourly.add(popValues.last);
-    }
-
+    
     return hourly;
   }
 

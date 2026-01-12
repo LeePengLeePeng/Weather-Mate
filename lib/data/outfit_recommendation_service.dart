@@ -11,7 +11,7 @@ enum ClimateRegion {
 
 /// 地區配置參數
 class RegionConfig {
-  final int tempOffset;        // 溫度偏移值
+  final int tempOffset;        // 溫度偏移值（體感修正）
   final String culturalNote;   // 文化備註
   
   const RegionConfig(this.tempOffset, this.culturalNote);
@@ -33,13 +33,13 @@ class OutfitRecommendation {
 /// 穿著建議服務
 class OutfitRecommendationService {
   
-  // 地區溫度調整參數
+  // 地區溫度調整參數（修正：熱帶居民對低溫敏感 = 體感更冷 = 負偏移）
   static const Map<ClimateRegion, RegionConfig> _regionConfigs = {
-    ClimateRegion.tropical: RegionConfig(5, '當地居民對低溫較敏感'),
-    ClimateRegion.subtropical: RegionConfig(2, '海島型氣候，濕度影響體感'),
+    ClimateRegion.tropical: RegionConfig(-5, '當地居民對低溫較敏感'),
+    ClimateRegion.subtropical: RegionConfig(-2, '海島型氣候，濕度影響體感'),
     ClimateRegion.temperate: RegionConfig(0, '四季分明，適應溫差'),
-    ClimateRegion.nordic: RegionConfig(-5, '當地居民適應寒冷氣候'),
-    ClimateRegion.arctic: RegionConfig(-8, '極地氣候，居民高度適應低溫'),
+    ClimateRegion.nordic: RegionConfig(5, '當地居民適應寒冷氣候'),
+    ClimateRegion.arctic: RegionConfig(8, '極地氣候，居民高度適應低溫'),
   };
   
   /// 根據經緯度判斷氣候區域
@@ -85,6 +85,8 @@ class OutfitRecommendationService {
     final RegionConfig config = _regionConfigs[region]!;
     
     // 調整後的體感溫度（根據地區）
+    // 熱帶居民對低溫敏感 → 體感更冷 → 負偏移
+    // 極地居民耐寒 → 體感較暖 → 正偏移
     final int adjustedFeelsLike = actualFeelsLike + config.tempOffset;
     
     // 濕度與風速判斷
@@ -181,7 +183,7 @@ class OutfitRecommendationService {
         'assets/outfit/light_jacket.png'
       ]);
     }
-    // 🔥 涼爽偏冷（15-19°C）- 你提到的情境
+    // 涼爽偏冷（15-19°C）
     else if (adjustedFeelsLike >= 15) {
       if (isWindy) {
         suggestion = '風大偏冷,建議穿著長袖襯衫+毛衣+厚外套,可加圍巾';
@@ -204,7 +206,7 @@ class OutfitRecommendationService {
         ]);
       }
     }
-    // 🔥 寒冷（10-14°C）- 需要更明確
+    // 寒冷（10-14°C）
     else if (adjustedFeelsLike >= 10) {
       if (isWindy) {
         suggestion = '寒風刺骨!建議穿著發熱衣+毛衣+厚外套(如羽絨背心或風衣)+圍巾,可戴手套';
@@ -230,7 +232,7 @@ class OutfitRecommendationService {
         ]);
       }
     }
-    // 🔥 極寒（5-9°C）
+    // 極寒（5-9°C）
     else if (adjustedFeelsLike >= 5) {
       suggestion = '極度寒冷!建議穿著發熱衣+厚毛衣+羽絨外套+圍巾+毛帽+手套,注意保暖';
       clothingItems.addAll([
@@ -240,7 +242,7 @@ class OutfitRecommendationService {
         'assets/outfit/gloves.png'
       ]);
     }
-    // 🔥 酷寒（<5°C）
+    // 酷寒（<5°C）
     else {
       suggestion = '酷寒警報!建議穿著發熱衣+厚毛衣+厚羽絨外套+厚圍巾+毛帽+厚手套,避免長時間外出';
       clothingItems.addAll([
