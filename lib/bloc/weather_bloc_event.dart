@@ -9,9 +9,10 @@ sealed class WeatherBlocEvent extends Equatable {
 
 class FetchWeather extends WeatherBlocEvent{
   final Position position;
+  final String? cityName;
   
-  const FetchWeather(this.position);
+  const FetchWeather(this.position, {this.cityName});
 
   @override
-  List<Object> get props => [position];
+  List<Object> get props => [position, cityName ?? ''];
 }

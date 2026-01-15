@@ -2,19 +2,35 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:weather_test/IconPlayer/WeatherIconPlayer.dart';
-import 'package:weather_test/data/outfit_recommendation_service.dart'; 
+import 'package:weather_test/data/outfit_recommendation_service.dart';
+import 'package:weather_test/tool/localization_helper.dart'; // 🔥 新增
 
 class WeatherView extends StatelessWidget {
   final dynamic weather; 
+  final String? displayCityName;
   final Widget? leading; 
   final Widget? trailing; 
 
   const WeatherView({
     super.key,
     required this.weather,
+    this.displayCityName,
     this.leading,
     this.trailing,
   });
+
+  // 🔥 判斷是否為英文顯示
+  bool get _isEnglish => LocalizationHelper.isEnglishCity(displayCityName ?? weather.areaName);
+
+  // 🔥 取得完整星期名稱 (根據語言)
+  String _getFullDayName(DateTime date) {
+    if (_isEnglish) {
+      return DateFormat('EEEE').format(date); // 英文: Monday, Tuesday...
+    } else {
+      const weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
+      return weekdays[date.weekday - 1]; // 中文: 星期一, 星期二...
+    }
+  }
 
   // --- 1. 靜態圖示路徑 (備用) ---
   String _getIconPath(int code) {
@@ -88,7 +104,7 @@ class WeatherView extends StatelessWidget {
       );
     }
     
-    // 如果都沒有匹配，回傳靜態圖
+    // 如果都沒有匹配,回傳靜態圖
     return Image.asset(
       _getIconPath(code),
       width: 150, 
@@ -115,7 +131,7 @@ class WeatherView extends StatelessWidget {
   // --- 4. 資訊卡片 Helper ---
   Widget _buildInfoCard({required IconData icon, required String title, required String value}) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.25),
         borderRadius: BorderRadius.circular(16),
@@ -132,11 +148,29 @@ class WeatherView extends StatelessWidget {
                 children: [
                   Icon(icon, size: 18, color: const Color.fromARGB(200, 57, 57, 57)),
                   const SizedBox(width: 6),
-                  Text(title, style: const TextStyle(color: Color.fromARGB(200, 57, 57, 57), fontSize: 12, fontWeight: FontWeight.w500, letterSpacing: 0.5)),
+                  Flexible(
+                    child: Text(
+                      title, 
+                      style: const TextStyle(
+                        color: Color.fromARGB(200, 57, 57, 57), 
+                        fontSize: 12, 
+                        fontWeight: FontWeight.w500, 
+                        letterSpacing: 0.5
+                      ),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 12),
-              Text(value, style: const TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 24, fontWeight: FontWeight.bold)),
+              Text(
+                value, 
+                style: const TextStyle(
+                  color: Color.fromARGB(255, 57, 57, 57), 
+                  fontSize: 24, 
+                  fontWeight: FontWeight.bold
+                ),
+                softWrap: true,
+              ),
             ],
           ),
         ),
@@ -152,12 +186,14 @@ class WeatherView extends StatelessWidget {
       humidity: weather.humidity.round(),
       windSpeed: weather.windSpeed,
       feelsLike: weather.feelsLike?.round(),
-      latitude: weather.latitude,   // 需要在 WeatherModel 中加入
-      longitude: weather.longitude, // 需要在 WeatherModel 中加入
+      latitude: weather.latitude,
+      longitude: weather.longitude,
     );
   }
 
   Widget _buildRegionIndicator(ClimateRegion region) {
+    final regionName = LocalizationHelper.getClimateRegionName(region.toString().split('.').last, _isEnglish); // 🔥 本地化
+    
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
@@ -175,7 +211,7 @@ class WeatherView extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Text(
-            OutfitRecommendationService.getRegionName(region),
+            regionName, // 🔥 使用本地化名稱
             style: const TextStyle(
               fontSize: 12,
               color: Color.fromARGB(200, 57, 57, 57),
@@ -187,28 +223,12 @@ class WeatherView extends StatelessWidget {
     );
   }
 
-    String formatDayLabel(DateTime date) {
-    DateTime today = DateTime.now();
-    today = DateTime(today.year, today.month, today.day);
-    DateTime targetDay = DateTime(date.year, date.month, date.day);
-    
-    int daysDifference = targetDay.difference(today).inDays;
-    
-    if (daysDifference == 0) {
-      return 'Today';
-    } else if (daysDifference == 1) {
-      return 'Tomorrow';
-    } else {
-      const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      return weekdays[date.weekday - 1];
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-
+    
     final weatherIcon = getWeatherIcon(weather.conditionCode);
     final OutfitRecommendation outfitData = _getOutfitRecommendation();
+    final texts = LocalizationHelper.getTexts(_isEnglish); // 🔥 取得本地化文字
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
@@ -217,11 +237,13 @@ class WeatherView extends StatelessWidget {
           pinned: true,
           delegate: _WeatherHeaderDelegate(
             weather: weather,
+            displayCityName: displayCityName,
             expandedHeight: 530.0,
             topPadding: MediaQuery.of(context).padding.top,
             weatherIcon: weatherIcon,
             leading: leading, 
             trailing: trailing,
+            isEnglish: _isEnglish, // 🔥 傳遞語言判斷
           ),
         ),
 
@@ -233,10 +255,18 @@ class WeatherView extends StatelessWidget {
               children: [
 
                 // --- 24 Hour Forecast ---
-                const Text('24 HOUR FORECAST', style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 1.2)),
+                Text(
+                  texts['hourForecast']!, 
+                  style: TextStyle(
+                    color: const Color.fromARGB(255, 57, 57, 57), 
+                    fontSize: _isEnglish ? 16 : 17, // 🔥 中文稍微放大
+                    fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
+                    letterSpacing: 1.2
+                  )
+                ),
                 const SizedBox(height: 10),
                 Container(
-                  height: 150, // 🔥 從 140 增加到 160
+                  height: 150,
                   decoration: BoxDecoration(
                     color: Colors.white.withOpacity(0.25), 
                     borderRadius: BorderRadius.circular(20), 
@@ -253,23 +283,17 @@ class WeatherView extends StatelessWidget {
                         itemBuilder: (context, index) {
                           final hour = DateTime.now().add(Duration(hours: index));
                           
-                          // 溫度
                           final temp = (weather.hourlyTemps != null && index < weather.hourlyTemps.length) 
                             ? weather.hourlyTemps[index] 
                             : weather.temperature;
                           
-                          // 🔥 降雨機率
                           int rainChance;
                           if (weather.hourlyRainChance != null && index < weather.hourlyRainChance!.length) {
-                            // 使用真實資料
                             rainChance = weather.hourlyRainChance![index];
                           } else {
-                            // 沒有逐時資料,用當日降雨機率模擬
                             if (weather.conditionCode >= 200 && weather.conditionCode < 600) {
-                              // 雨天相關天氣碼
                               rainChance = (weather.rainChance - (index * 2)).clamp(30, 90);
                             } else {
-                              // 非雨天
                               rainChance = (weather.rainChance - (index * 3)).clamp(0, 40);
                             }
                           }
@@ -280,9 +304,8 @@ class WeatherView extends StatelessWidget {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                // ⏰ 時間
                                 Text(
-                                  index == 0 ? 'Now' : DateFormat('HH:00').format(hour), 
+                                  index == 0 ? texts['now']! : DateFormat('HH:00').format(hour),
                                   style: TextStyle(
                                     color: const Color.fromARGB(255, 57, 57, 57), 
                                     fontSize: 14, 
@@ -292,7 +315,6 @@ class WeatherView extends StatelessWidget {
                                 
                                 const SizedBox(height: 6),
                                 
-                                // 🌤️ 天氣圖示
                                 _getSmallWeatherIcon(
                                   (weather.hourlyConditionCodes != null &&
                                   index < weather.hourlyConditionCodes.length)
@@ -302,7 +324,6 @@ class WeatherView extends StatelessWidget {
                                 
                                 const SizedBox(height: 4),
                                 
-                                // 💧 降雨機率 (緊湊版)
                                 Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
@@ -316,8 +337,8 @@ class WeatherView extends StatelessWidget {
                                     const SizedBox(width: 2),
                                     Text(
                                       '$rainChance%',
-                                      style: TextStyle(
-                                        color: const Color.fromARGB(180, 57, 57, 57),
+                                      style: const TextStyle(
+                                        color: Color.fromARGB(180, 57, 57, 57),
                                         fontSize: 11,
                                         fontWeight: FontWeight.w500,
                                       ),
@@ -327,7 +348,6 @@ class WeatherView extends StatelessWidget {
                                 
                                 const SizedBox(height: 4),
                                 
-                                // 🌡️ 溫度
                                 Text(
                                   '${temp.round()}°', 
                                   style: const TextStyle(
@@ -347,7 +367,15 @@ class WeatherView extends StatelessWidget {
                 const SizedBox(height: 30),
 
                 // --- 5 Day Forecast ---
-                const Text('5 DAY FORECAST', style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 1.2)),
+                Text(
+                  texts['dayForecast']!, 
+                  style: TextStyle(
+                    color: const Color.fromARGB(255, 57, 57, 57), 
+                    fontSize: _isEnglish ? 16 : 17, // 🔥 中文稍微放大
+                    fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
+                    letterSpacing: 1.2
+                  )
+                ),
                 const SizedBox(height: 10),
                 Container(
                   decoration: BoxDecoration(
@@ -364,7 +392,6 @@ class WeatherView extends StatelessWidget {
                         physics: const NeverScrollableScrollPhysics(),
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         
-                        // 🔥 1. 如果有抓到 7 天資料，就用那筆資料的長度；否則預設 7 天
                         itemCount: (weather.dailyForecasts != null && weather.dailyForecasts.isNotEmpty) 
                             ? weather.dailyForecasts.length 
                             : 7,
@@ -375,10 +402,8 @@ class WeatherView extends StatelessWidget {
                           thickness: 1,
                         ),
                         itemBuilder: (context, index) {
-                          // 🔥 2. 判斷是否有真實資料
                           final bool hasRealData = weather.dailyForecasts != null && weather.dailyForecasts.isNotEmpty && index < weather.dailyForecasts.length;
                           
-                          // 定義變數
                           DateTime day;
                           int maxTemp;
                           int minTemp;
@@ -386,7 +411,6 @@ class WeatherView extends StatelessWidget {
                           int code;
 
                           if (hasRealData) {
-                            // ✅ 使用真實資料 (從 API 抓來的)
                             final daily = weather.dailyForecasts[index];
                             day = daily.date;
                             maxTemp = daily.maxTemp.round();
@@ -394,7 +418,6 @@ class WeatherView extends StatelessWidget {
                             rainChance = daily.rainChance;
                             code = daily.conditionCode;
                           } else {
-                            // ⚠️ 備用假資料 (只有在 API 失敗時才用這個)
                             day = DateTime.now().add(Duration(days: index + 1));
                             maxTemp = (weather.tempMax - (index * 0.5)).round();
                             minTemp = (weather.tempMin - (index * 0.3)).round();
@@ -406,12 +429,10 @@ class WeatherView extends StatelessWidget {
                             padding: const EdgeInsets.symmetric(vertical: 5),
                             child: Row(
                               children: [
-                                // 📅 日期
                                 SizedBox(
                                   width: 100,
                                   child: Text(
-                                    // 這裡可以根據需求改成顯示 "週一", "週二" 等
-                                    formatDayLabel(day),
+                                    LocalizationHelper.getDayLabel(day, _isEnglish), // 🔥 本地化
                                     style: TextStyle(
                                       color: const Color.fromARGB(255, 57, 57, 57),
                                       fontSize: 16,
@@ -422,11 +443,9 @@ class WeatherView extends StatelessWidget {
                                 
                                 const SizedBox(width: 30),
                                 
-                                // 🌤️ 天氣圖示 + 降雨機率
                                 Column(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    // ✅ 這裡現在會根據每天不同的 code 顯示不同圖示
                                     _getSmallWeatherIcon(code, size: 28),
                                     const SizedBox(height: 4),
                                     Row(
@@ -435,7 +454,7 @@ class WeatherView extends StatelessWidget {
                                         Icon(
                                           Icons.water_drop,
                                           size: 12,
-                                          color: rainChance > 30 // 超過 30% 變藍色
+                                          color: rainChance > 30
                                             ? const Color(0xFF4FC3F7)
                                             : const Color.fromARGB(120, 57, 57, 57),
                                         ),
@@ -455,7 +474,6 @@ class WeatherView extends StatelessWidget {
                                 
                                 const Spacer(), 
                                 
-                                // 🌡️ 溫度
                                 Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
@@ -495,16 +513,15 @@ class WeatherView extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'OUTFIT SUGGESTION',
+                    Text(
+                      texts['outfitSuggestion']!,
                       style: TextStyle(
-                        color: Color.fromARGB(255, 57, 57, 57),
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
+                        color: const Color.fromARGB(255, 57, 57, 57),
+                        fontSize: _isEnglish ? 16 : 17, // 🔥 中文稍微放大
+                        fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
                         letterSpacing: 1.2,
                       ),
                     ),
-                    // 🔥 新增：氣候區域標籤
                    _buildRegionIndicator(outfitData.region),
                   ],
                 ),
@@ -521,44 +538,43 @@ class WeatherView extends StatelessWidget {
                     ),
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(20),
+                    borderRadius: BorderRadius.circular(5),
                     child: BackdropFilter(
                       filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
                       child: Row(
                         children: [
-                          // 左側:文字建議
                           Expanded(
                             flex: 3,
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Row(
+                                Row(
                                   children: [
-                                    Icon(
+                                    const Icon(
                                       Icons.checkroom,
                                       size: 20,
                                       color: Color.fromARGB(200, 57, 57, 57),
                                     ),
-                                    SizedBox(width: 8),
+                                    const SizedBox(width: 8),
                                     Text(
-                                      '今日穿搭建議',
+                                      texts['outfitTitle']!,
                                       style: TextStyle(
-                                        color: Color.fromARGB(200, 57, 57, 57),
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
+                                        color: const Color.fromARGB(200, 57, 57, 57),
+                                        fontSize: _isEnglish ? 14 : 15, // 🔥 中文稍微放大
+                                        fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
                                       ),
                                     ),
                                   ],
                                 ),
                                 const SizedBox(height: 12),
-                                // 🔥 使用服務回傳的建議
                                 Text(
-                                  outfitData.suggestion,
+                                  LocalizationHelper.translateOutfitSuggestion(outfitData.suggestion, _isEnglish), // 🔥 有翻譯
                                   style: const TextStyle(
                                     color: Color.fromARGB(255, 57, 57, 57),
-                                    fontSize: 16,
+                                    fontSize: 14,
                                     height: 1.4,
                                   ),
+                                  softWrap: true,
                                 ),
                               ],
                             ),
@@ -566,7 +582,6 @@ class WeatherView extends StatelessWidget {
                           
                           const SizedBox(width: 16),
                           
-                          // 右側:服裝圖示
                           Expanded(
                             flex: 2,
                             child: Wrap(
@@ -587,7 +602,6 @@ class WeatherView extends StatelessWidget {
                                       item,
                                       fit: BoxFit.contain,
                                       errorBuilder: (context, error, stackTrace) {
-                                        // 讀取失敗時顯示的備用 icon
                                         return const Icon(
                                           Icons.checkroom,
                                           size: 30,
@@ -609,62 +623,69 @@ class WeatherView extends StatelessWidget {
                 const SizedBox(height: 30),
 
                 // 🔥🔥🔥 Details Grid (整合所有資訊) 🔥🔥🔥
-                const Text('DETAILS', style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 16, fontWeight: FontWeight.w600, letterSpacing: 1.2)),
+                Text(
+                  texts['details']!, 
+                  style: TextStyle(
+                    color: const Color.fromARGB(255, 57, 57, 57), 
+                    fontSize: _isEnglish ? 16 : 17, // 🔥 中文稍微放大
+                    fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
+                    letterSpacing: 1.2
+                  )
+                ),
                 const SizedBox(height: 10),
 
-                // 第三排:最高溫 & 最低溫
                 Row(children: [
-                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: 'TEMP MIN', value: '${weather.tempMin.round()}°C')),
+                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: texts['tempMin']!, value: '${weather.tempMin.round()}°C')),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: 'TEMP MAX', value: '${weather.tempMax.round()}°C')),
+                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: texts['tempMax']!, value: '${weather.tempMax.round()}°C')),
                 ]),
                 
                 const SizedBox(height: 10),
                 
-                // 第四排:日出 & 日落
                 Row(children: [
-                  Expanded(child: _buildInfoCard(icon: Icons.wb_twilight, title: 'SUNRISE', value: DateFormat('HH:mm').format(weather.sunrise))),
+                  Expanded(child: _buildInfoCard(icon: Icons.wb_twilight, title: texts['sunrise']!, value: DateFormat('HH:mm').format(weather.sunrise))),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildInfoCard(icon: Icons.wb_twilight, title: 'SUNSET', value: DateFormat('HH:mm').format(weather.sunset))),
+                  Expanded(child: _buildInfoCard(icon: Icons.wb_twilight, title: texts['sunset']!, value: DateFormat('HH:mm').format(weather.sunset))),
                 ]),
 
                 const SizedBox(height: 10),
 
-                // 第一排:濕度 & 風速
                 Row(children: [
-                  Expanded(child: _buildInfoCard(icon: Icons.water_drop_outlined, title: 'HUMIDITY', value: '${weather.humidity.round()}%')),
+                  Expanded(child: _buildInfoCard(icon: Icons.water_drop_outlined, title: texts['humidity']!, value: '${weather.humidity.round()}%')),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildInfoCard(icon: Icons.air, title: 'WIND', value: '${weather.windSpeed.round()} km/h')),
+                  Expanded(child: _buildInfoCard(icon: Icons.air, title: texts['wind']!, value: '${weather.windSpeed.round()} km/h')),
                 ]),
                 
                 const SizedBox(height: 10),
                 
-                // 第二排:體感溫度 & UV指數
                 Row(children: [
                   Expanded(child: _buildInfoCard(
                     icon: Icons.thermostat, 
-                    title: 'FEELS LIKE', 
+                    title: texts['feelsLike']!,
                     value: weather.feelsLike != null 
                       ? '${weather.feelsLike!.round()}°C' 
                       : '${(weather.temperature - 2).round()}°C'
                   )),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildInfoCard(icon: Icons.wb_sunny_outlined, title: 'UV INDEX', value: '${(weather.temperature * 0.2).round()}')),
+                  Expanded(child: _buildInfoCard(icon: Icons.wb_sunny_outlined, title: texts['uvIndex']!, value: '${(weather.temperature * 0.2).round()}')),
                 ]),
                 
-                // 可選欄位:露點溫度 & 風向
                 if (weather.dewPoint != null || weather.windDirection != null) ...[
                   const SizedBox(height: 10),
                   Row(children: [
                     if (weather.dewPoint != null)
-                      Expanded(child: _buildInfoCard(icon: Icons.water, title: 'DEW POINT', value: '${weather.dewPoint!.round()}°C'))
+                      Expanded(child: _buildInfoCard(icon: Icons.water, title: texts['dewPoint']!, value: '${weather.dewPoint!.round()}°C'))
                     else
                       const Expanded(child: SizedBox()),
                     
                     const SizedBox(width: 10),
                     
                     if (weather.windDirection != null)
-                      Expanded(child: _buildInfoCard(icon: Icons.navigation, title: 'WIND DIR', value: weather.windDirection!))
+                      Expanded(child: _buildInfoCard(
+                        icon: Icons.navigation, 
+                        title: texts['windDir']!, 
+                        value: LocalizationHelper.translateWindDirection(weather.windDirection!, _isEnglish) // 🔥 翻譯風向
+                      ))
                     else
                       const Expanded(child: SizedBox()),
                   ]),
@@ -684,30 +705,41 @@ class WeatherView extends StatelessWidget {
 // ----------------------------------------------------------------------
 class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
   final dynamic weather;
+  final String? displayCityName; 
   final double expandedHeight;
   final double topPadding;
   final Widget weatherIcon;
   final Widget? leading; 
-  final Widget? trailing; 
+  final Widget? trailing;
+  final bool isEnglish; // 🔥 新增
 
   _WeatherHeaderDelegate({
     required this.weather,
     required this.expandedHeight,
     required this.topPadding,
     required this.weatherIcon,
+    required this.isEnglish, // 🔥 新增
+    this.displayCityName,
     this.leading,
     this.trailing,
   });
 
   String _getOutfitSuggestion() {
-     final int temp = weather.temperature.round();
-     final int code = weather.conditionCode;
-     if (code >= 200 && code < 600) return "外面正在下雨,記得帶把傘出門 ☔️";
-     if (temp >= 30) return "天氣炎熱,建議穿著短袖與透氣衣物 ☀️";
-     else if (temp >= 25) return "天氣溫暖,穿件舒適的 T-shirt 即可 👕";
-     else if (temp >= 20) return "稍有涼意,建議加件薄外套 🧥";
-     else if (temp >= 15) return "天氣變冷了,請穿著夾克或毛衣 🧣";
-     else return "寒流來襲!請務必穿著厚外套保暖 ❄️";
+     return LocalizationHelper.getOutfitSuggestion(
+       weather.temperature.round(), 
+       weather.conditionCode,
+       isEnglish // 🔥 使用傳入的語言判斷
+     );
+  }
+
+  // 🔥 新增：取得完整星期名稱
+  String _getFullDayName(DateTime date) {
+    if (isEnglish) {
+      return DateFormat('EEEE').format(date); // 英文: Monday, Tuesday...
+    } else {
+      const weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
+      return weekdays[date.weekday - 1]; // 中文: 星期一, 星期二...
+    }
   }
 
   @override
@@ -751,7 +783,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                 left: 0, 
                 right: 0, 
                 child: Text(
-                  '${weather.areaName}', 
+                  displayCityName ?? weather.areaName,
                   textAlign: TextAlign.center, 
                   style: const TextStyle(
                     fontSize: 20, 
@@ -779,7 +811,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                 )
               ),
               
-              // 🔥 Expanded view - 用同一個 weatherIcon
+              // 🔥 Expanded view
               Positioned(
                 top: 0, 
                 left: 0, 
@@ -799,7 +831,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                           SizedBox(
                             width: 200, 
                             height: 200, 
-                            child: weatherIcon // 👈 用同一個
+                            child: weatherIcon
                           ),
                           const SizedBox(width: 8),
                           Text(
@@ -811,7 +843,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                             )
                           ),
                           Text(
-                            weather.description.toUpperCase(), 
+                            LocalizationHelper.translateWeatherDescription(weather.description, isEnglish).toUpperCase(), // 🔥 翻譯天氣描述
                             style: const TextStyle(
                               fontSize: 30, 
                               fontWeight: FontWeight.w500, 
@@ -820,7 +852,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                           ),
                           const SizedBox(height: 5),
                           Text(
-                            '${DateFormat('MM/dd').add_jm().format(weather.date)}\n${DateFormat('EEEE').format(weather.date)}', 
+                            '${DateFormat('MM/dd').add_jm().format(weather.date)}\n${_getFullDayName(weather.date)}', 
                             textAlign: TextAlign.center, 
                             style: const TextStyle(
                               fontSize: 18, 
@@ -835,7 +867,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                 )
               ),
 
-              // 🔥 Collapsed view - 用同一個 weatherIcon  
+              // 🔥 Collapsed view
               Positioned(
                 top: areaTop + 50, 
                 left: 0, 
@@ -849,7 +881,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                       SizedBox(
                         height: 100, 
                         width: 100, 
-                        child: weatherIcon // 👈 用同一個
+                        child: weatherIcon
                       ),
                       const SizedBox(height: 10), 
                       const SizedBox(width: 15),
@@ -868,7 +900,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                           ),
                           const SizedBox(height: 10),
                           Text(
-                            weather.description, 
+                            LocalizationHelper.translateWeatherDescription(weather.description, isEnglish), // 🔥 翻譯天氣描述
                             style: const TextStyle(
                               fontSize: 25, 
                               fontWeight: FontWeight.w500, 

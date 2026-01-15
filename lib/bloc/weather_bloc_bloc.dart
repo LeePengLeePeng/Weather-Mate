@@ -1,8 +1,6 @@
 import 'package:bloc/bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:geolocator/geolocator.dart';
-//import 'package:weather/weather.dart';
-//import 'package:weather_test/data/my_data.dart';
 import 'package:weather_test/data/weather_model.dart'; // 加入這個
 import 'package:weather_test/data/weather_repository.dart'; // 加入這個
 
@@ -20,6 +18,7 @@ class WeatherBlocBloc extends Bloc<WeatherBlocEvent, WeatherBlocState> {
         final weather = await _repository.getWeather(
           event.position.latitude,
           event.position.longitude,
+          displayCityName: event.cityName,
         );
         print("✅ 成功取得資料: ${weather.areaName}");
         emit(WeatherBlocSuccess(weather));

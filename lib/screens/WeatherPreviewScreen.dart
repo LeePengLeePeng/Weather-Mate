@@ -19,11 +19,23 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
   WeatherModel? _weather;
   bool _isLoading = true;
   String _error = '';
+  String _userCountryCode = 'TW';
+
+  String get _displayCityName => _formatCityNameForDisplay(widget.city);
 
   @override
   void initState() {
     super.initState();
     _fetchWeather();
+
+  try {
+      final String? systemCountry = WidgetsBinding.instance.platformDispatcher.locale.countryCode;
+      if (systemCountry != null) {
+        _userCountryCode = systemCountry; 
+      }
+    } catch (e) {
+      debugPrint("無法獲取系統地區: $e");
+    }
   }
 
   Future<void> _fetchWeather() async {
@@ -48,6 +60,55 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
     }
   }
 
+  String _formatCityNameForDisplay(CityData city) {
+    // 如果沒有國家信息,直接返回城市名
+    if (city.country.isEmpty) {
+      return city.name;
+    }
+    
+    // 解析 country 字段 (格式: "行政區, 國家" 或 "國家")
+    List<String> parts = city.country.split(',').map((e) => e.trim()).toList();
+    String cityName = city.name;
+    String country = parts.isNotEmpty ? parts.last : '';
+    
+    // 判斷是否為本地國家
+    bool isLocalCountry = _isLocalCountry(country);
+    
+    // 🌏 本地國家:只顯示 "城市名, 行政區"
+    if (isLocalCountry) {
+      if (parts.length >= 2) {
+        String region = parts[0]; // 第一部分是行政區
+        // 避免重複顯示 (例如: "大阪市, 大阪府" 可以簡化為 "大阪, 大阪府")
+        if (cityName.contains(region) || region.contains(cityName)) {
+          return cityName; // 只顯示城市名
+        }
+        return '$cityName, $region';
+      }
+      return cityName;
+    }
+    
+    // 🌍 國外城市:顯示 "城市名, 國家"
+    // 特殊處理:如果城市名本身就很長,只顯示城市名
+    if (cityName.length > 15) {
+      return cityName;
+    }
+    
+    return '$cityName, $country';
+  }
+
+  bool _isLocalCountry(String country) {
+    if (_userCountryCode == 'TW') {
+      return country.contains('台灣') || country.contains('Taiwan') || country.contains('中華民國');
+    }
+    if (_userCountryCode == 'JP') {
+      return country.contains('日本') || country.contains('Japan');
+    }
+    if (_userCountryCode == 'US') {
+      return country.contains('美國') || country.contains('United States');
+    }
+    return false;
+  }
+  
   @override
   Widget build(BuildContext context) {
     // 載入中畫面
@@ -66,7 +127,7 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
         body: Center(child: Text(_error)),
       );
     }
-
+    
     // 🔥 成功畫面
     return Scaffold(
       // 這裡的 backgroundColor 設什麼都沒關係，因為會被 WeatherBackground 蓋過
@@ -88,6 +149,7 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
           Positioned.fill(
             child: WeatherView(
               weather: _weather!,
+              displayCityName: _displayCityName,
               
               // 左上角：取消按鈕 (X)
               leading: IconButton(

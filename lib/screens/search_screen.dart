@@ -13,23 +13,33 @@ import 'package:weather_test/tool/fade_route.dart';
 import 'WeatherPreviewScreen.dart'; 
 
 class CityData {
+  final String id;
   final String name;
+  final String country;
   final double latitude;
   final double longitude;
 
-  CityData({required this.name, required this.latitude, required this.longitude});
+  CityData({required this.id, required this.name, required this.country, required this.latitude, required this.longitude});
 
   Map<String, dynamic> toJson() => {
+    'id': id,
     'name': name,
+    'country': country,
     'latitude': latitude,
     'longitude': longitude,
   };
 
   factory CityData.fromJson(Map<String, dynamic> json) {
+    final double lat = (json['latitude'] as num).toDouble();
+    final double lon = (json['longitude'] as num).toDouble();
+
     return CityData(
-      name: json['name'],
-      latitude: json['latitude'],
-      longitude: json['longitude'],
+      id: json['id'] ??
+          '${lat.toStringAsFixed(4)},${lon.toStringAsFixed(4)}',
+      name: json['name'] ?? '',
+      country: json['country'] ?? '',
+      latitude: lat,
+      longitude: lon,
     );
   }
 }
@@ -122,7 +132,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   }
 
   Future<void> _addCityToSaved(CityData city) async {
-    final exists = _savedCities.any((c) => c.name == city.name);
+    final exists = _savedCities.any((c) => c.id == city.id);
     if (exists) return;
 
     setState(() {
@@ -133,7 +143,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
 
   Future<void> _removeCity(CityData city) async {
     setState(() {
-      _savedCities.removeWhere((c) => c.name == city.name);
+      _savedCities.removeWhere((c) => c.id == city.id);
     });
     _saveToPrefs();
   }
@@ -149,6 +159,9 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   Future<void> _useCurrentLocation() async {
     setState(() => _isLoading = true);
     try {
+      await setLocaleIdentifier("zh_TW");
+      debugPrint("🌍 目前位置使用 zh_TW locale");
+      
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
@@ -183,6 +196,17 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       return;
     }
     
+    // 🔥 根據搜尋語言設定 geocoding locale
+    if (_isEnglish(query)) {
+      // 英文搜尋 → 使用英文結果
+      await setLocaleIdentifier("en_US");
+      debugPrint("🌍 設定 locale 為 en_US");
+    } else {
+      // 中文搜尋 → 使用繁體中文結果  
+      await setLocaleIdentifier("zh_TW");
+      debugPrint("🌍 設定 locale 為 zh_TW");
+    }
+
     setState(() {
       _isLoading = true;
       _errorMessage = '';
@@ -192,7 +216,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     try {
       List<String> searchQueries = _generateSearchVariations(query);
       
-      // ✅ 去除重複的搜尋詞
+      // 去除重複的搜尋詞
       searchQueries = searchQueries.toSet().toList();
       
       debugPrint("🔍 將搜尋 ${searchQueries.length} 個變體: $searchQueries");
@@ -256,29 +280,40 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           if (placemarks.isEmpty) continue;
           
           Placemark p = placemarks.first;
-          String country = p.country ?? '';
-          String administrativeArea = p.administrativeArea ?? '';
-          String locality = p.locality ?? '';
-          String subAdministrativeArea = p.subAdministrativeArea ?? '';
+          String title = p.locality ?? p.subLocality ?? p.name ?? query;
+          // 如果抓到的名字是空的或是純數字(有時候會抓到路號)，就改用上一層行政區
+          if (title.trim().isEmpty || RegExp(r'^\d+$').hasMatch(title)) {
+             title = p.administrativeArea ?? query;
+          }
+
+          // 2. 決定副標題 (Subtitle) - 組合「行政區, 國家」
+          List<String> subParts = [];
           
-          String displayName = _formatAppleStyleName(
-            country: country,
-            administrativeArea: administrativeArea,
-            locality: locality,
-            subAdministrativeArea: subAdministrativeArea,
-            query: query,
-          );
+          // 如果行政區存在，且跟標題不一樣 (避免顯示 "Tokyo, Tokyo")
+          if (p.administrativeArea != null && p.administrativeArea!.isNotEmpty && p.administrativeArea != title) {
+            subParts.add(p.administrativeArea!);
+          }
+          // 加入國家
+          if (p.country != null && p.country!.isNotEmpty) {
+            subParts.add(p.country!);
+          }
           
+          String countryInfo = subParts.join(', ');
           String locationKey = _getDistrictKey(
-            country: country,
-            administrativeArea: administrativeArea,
-            locality: locality,
-            subAdministrativeArea: subAdministrativeArea,
+            country: p.country ?? '',
+            administrativeArea: p.administrativeArea ?? '',
+            locality: title,
+            subAdministrativeArea: p.subAdministrativeArea ?? '',
           );
           
+          final cityId =
+            '${loc.latitude.toStringAsFixed(4)},${loc.longitude.toStringAsFixed(4)}';
+
           if (!uniqueLocations.containsKey(locationKey)) {
             uniqueLocations[locationKey] = CityData(
-              name: displayName,
+              id: cityId,
+              name: title, 
+              country: countryInfo,
               latitude: loc.latitude,
               longitude: loc.longitude,
             );
@@ -774,7 +809,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           final city = _savedCities[index - 1]; 
           
           return Slidable(
-            key: Key(city.name),
+            key: Key(city.id),
             groupTag: 'saved_cities_list', 
             endActionPane: ActionPane(
               motion: const BehindMotion(), 
@@ -802,18 +837,40 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                 borderRadius: BorderRadius.circular(15), 
                 border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
               ),
-              child: ListTile(
-                title: Text(city.name, style: const TextStyle(color: Colors.black87, fontSize: 18, fontWeight: FontWeight.bold)),
-                trailing: const Icon(Icons.arrow_forward_ios, color: Colors.black54, size: 14), 
+              child: 
+                ListTile(
+                  title: Text(
+                    city.name,
+                    style: const TextStyle(
+                      color: Colors.black87,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  subtitle: city.country.isNotEmpty
+                      ? Text(
+                          city.country,
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 13,
+                          ),
+                        )
+                      : null,
+                  trailing: const Icon(Icons.arrow_forward_ios, color: Colors.black54, size: 14
+                ),
                 onTap: () {
+                  final displayName = _formatCityNameForDisplay(city);
+                  print("🏙️ 從列表選擇城市: $displayName");
+
                   context.read<WeatherBlocBloc>().add(FetchWeather(Position(
                     latitude: city.latitude,
                     longitude: city.longitude,
                     timestamp: DateTime.now(),
                     accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0, isMocked: false
-                  )));
-
-                  widget.onCitySelected?.call();
+                  ),
+                  cityName: displayName,  
+                ));
+                widget.onCitySelected?.call();
                 },
               ),
             ),
@@ -821,6 +878,43 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
         },
       ),
     );
+  }
+
+  // 🔥 新增: 智能格式化城市名稱的方法
+  String _formatCityNameForDisplay(CityData city) {
+    // 如果沒有國家信息,直接返回城市名
+    if (city.country.isEmpty) {
+      return city.name;
+    }
+    
+    // 解析 country 字段 (格式: "行政區, 國家" 或 "國家")
+    List<String> parts = city.country.split(',').map((e) => e.trim()).toList();
+    String cityName = city.name;
+    String country = parts.isNotEmpty ? parts.last : '';
+    
+    // 判斷是否為本地國家
+    bool isLocalCountry = _isLocalCountry(country);
+    
+    // 🌏 本地國家:只顯示 "城市名, 行政區"
+    if (isLocalCountry) {
+      if (parts.length >= 2) {
+        String region = parts[0]; // 第一部分是行政區
+        // 避免重複顯示 (例如: "大阪市, 大阪府" 可以簡化為 "大阪, 大阪府")
+        if (cityName.contains(region) || region.contains(cityName)) {
+          return cityName; // 只顯示城市名
+        }
+        return '$cityName, $region';
+      }
+      return cityName;
+    }
+    
+    // 🌍 國外城市:顯示 "城市名, 國家"
+    // 特殊處理:如果城市名本身就很長,只顯示城市名
+    if (cityName.length > 15) {
+      return cityName;
+    }
+    
+    return '$cityName, $country';
   }
 
   Widget _buildSearchResults() {
@@ -847,6 +941,10 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                 fontWeight: FontWeight.w500
               ),
             ),
+            subtitle: Text(
+              city.country,
+              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+            ),
             onTap: () async {
                 _focusNode.unfocus();
                 
@@ -867,12 +965,16 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                   });
 
                   if (mounted) {
+                    final displayName = _formatCityNameForDisplay(city);
+                    print("🏙️ 準備顯示城市: $displayName");
                     context.read<WeatherBlocBloc>().add(FetchWeather(Position(
                       latitude: city.latitude,
                       longitude: city.longitude,
                       timestamp: DateTime.now(),
                       accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0, isMocked: false
-                    )));
+                    ),
+                    cityName: displayName,
+                    ));
                   }
 
                   widget.onCitySelected?.call(); 

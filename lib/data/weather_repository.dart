@@ -216,12 +216,12 @@ class WeatherRepository {
   // ===============================================================
   // 1. 主要進入點
   // ===============================================================
-  Future<WeatherModel> getWeather(double lat, double lon) async {
+  Future<WeatherModel> getWeather(double lat, double lon, {String? displayCityName,}) async {
     if (openWeatherApiKey.isEmpty || cwaApiKey.isEmpty) {
       throw Exception("❌ API Key 遺失！請檢查 .env 檔案是否設定正確。");
     }
 
-    WeatherModel openWeatherData = await _fetchFromOpenWeather(lat, lon);
+    WeatherModel openWeatherData = await _fetchFromOpenWeather(lat, lon, displayCityName);
 
     if (_isInTaiwan(lat, lon)) {
       try {
@@ -235,10 +235,35 @@ class WeatherRepository {
     }
   }
 
+
+    double computeDisplayTemp({
+    required double forecastTemp,
+    required double stationTemp,
+    required DateTime now,
+  }) {
+    final diff = stationTemp - forecastTemp;
+    final absDiff = diff.abs();
+
+    final hour = now.hour;
+    final isNight = hour >= 20 || hour <= 6;
+    final maxCorrection = isNight ? 1.0 : 1.5;
+
+    if (absDiff <= 0.5) {
+      return stationTemp;
+    }
+
+    if (absDiff <= 2.0) {
+      final weight = 1 - (absDiff - 0.5) / 1.5;
+      return forecastTemp * (1 - weight) + stationTemp * weight;
+    }
+
+    return forecastTemp + diff.sign * maxCorrection;
+  }
+  
   // ===============================================================
   // 2. 處理 OpenWeather
   // ===============================================================
-  Future<WeatherModel> _fetchFromOpenWeather(double lat, double lon) async {
+  Future<WeatherModel> _fetchFromOpenWeather(double lat, double lon,String? displayCityName,) async {
     WeatherFactory wf =
         WeatherFactory(openWeatherApiKey, language: Language.CHINESE_TRADITIONAL);
 
@@ -377,7 +402,7 @@ class WeatherRepository {
         conditionCode: representative.weatherConditionCode ?? 800,
       ));
     }
-
+    
     return WeatherModel(
       latitude: lat,
       longitude: lon,
@@ -388,7 +413,9 @@ class WeatherRepository {
       conditionCode: decideConditionCode(current.weatherDescription ?? "", currentPop),
       hourlyConditionCodes: hourlyCodes,
       hourlyRainChance: hourlyRainChances,
-      areaName: current.areaName ?? "國外地區",
+      areaName: (displayCityName != null && displayCityName.trim().isNotEmpty)
+        ? displayCityName
+        : (current.areaName ?? "國外地區"),
       date: current.date ?? DateTime.now(),
       sunrise: current.sunrise ?? DateTime.now(),
       sunset: current.sunset ?? DateTime.now(),
@@ -405,6 +432,81 @@ class WeatherRepository {
   }
 
   // ===============================================================
+  // 🆕 新增: 取得最近觀測站的「實測溫度」 (O-A0001-001)
+  // ===============================================================
+  Future<double?> _fetchNearestObservation(double lat, double lon) async {
+    try {
+      // 使用 O-A0001-001 (自動氣象站資料) 較為密集
+      final uri = Uri.https(
+        'opendata.cwa.gov.tw',
+        '/api/v1/rest/datastore/O-A0001-001',
+        {
+          'Authorization': cwaApiKey,
+          'format': 'JSON',
+          // 可以過濾狀態為「開站」的，減少資料量 (選用)
+          'status': 'A', 
+        },
+      );
+
+      final response = await http.get(uri);
+      if (response.statusCode != 200) return null;
+
+      final data = jsonDecode(utf8.decode(response.bodyBytes));
+      if (data['success'] != 'true') return null;
+
+      final stations = _safeGetList(_safeGet(data, 'records'), 'Station');
+      if (stations.isEmpty) return null;
+
+      double? nearestTemp;
+      double minDistance = double.infinity;
+
+      for (var station in stations) {
+        // 1. 取得座標
+        var geo = _safeGet(station, 'GeoInfo');
+        var coord = _safeGet(geo, 'Coordinates');
+        if (coord == null) continue; // 略過無座標站點
+
+        // 注意: CWA API 有時經緯度欄位名稱不同，需做防呆
+        double? sLat = double.tryParse(_safeGet(coord, 'CoordinateLatitude')?.toString() ?? 
+                                     _safeGet(coord, 'Latitude')?.toString() ?? '');
+        double? sLon = double.tryParse(_safeGet(coord, 'CoordinateLongitude')?.toString() ?? 
+                                     _safeGet(coord, 'Longitude')?.toString() ?? '');
+
+        if (sLat == null || sLon == null) continue;
+
+        // 2. 計算距離 (Haversine Formula 簡化版或直線距離，這裡用簡單的直線距離比較快)
+        // 為了效能，初步篩選可以用歐氏距離，因為台灣範圍小
+        double dist = pow(sLat - lat, 2) + pow(sLon - lon, 2).toDouble();
+
+        // 3. 更新最近站點
+        if (dist < minDistance) {
+          // 抓取溫度
+          var weatherElem = _safeGet(station, 'WeatherElement');
+          var tempStr = _safeGet(weatherElem, 'AirTemperature')?.toString();
+          
+          // 排除無效值 (CWA 異常值通常為 -99 或 -999)
+          double? temp = double.tryParse(tempStr ?? '');
+          if (temp != null && temp > -50 && temp < 50) {
+            minDistance = dist;
+            nearestTemp = temp;
+          }
+        }
+      }
+
+      // 如果最近距離太大 (例如 > 0.2 度 約 20km)，可能代表抓錯或在海上，可自行決定是否捨棄
+      // 這裡直接回傳最近的
+      if (nearestTemp != null) {
+        print("🌡️ 成功取得測站實測溫度: $nearestTemp°C");
+      }
+      return nearestTemp;
+
+    } catch (e) {
+      print("❌ 取得測站觀測資料失敗: $e");
+      return null;
+    }
+  }
+
+  // ===============================================================
   // 3. 處理 CWA 台灣資料
   // ===============================================================
   Future<WeatherModel> _fetchTaiwanTownshipWeather(
@@ -418,6 +520,8 @@ class WeatherRepository {
     if (district == city) district = place.subLocality ?? "";
 
     print("📍 CWA 請求地點: $city $district");
+
+    double? realTimeTemp = await _fetchNearestObservation(lat, lon);
 
     String? dataId = _getCountyDataId(city);
     if (dataId == null) return baseData;
@@ -465,7 +569,7 @@ class WeatherRepository {
     final weatherElements = _safeGetList(targetLocation, 'WeatherElement');
     
     // --- Helper: 通用取值 ---
-    String? getElementValue(List<String> possibleNames) {
+    String? getCurrentForecastValue(List<String> possibleNames) {
       try {
         var el = weatherElements.firstWhere(
           (e) => possibleNames.contains(_safeGet(e, 'ElementName')),
@@ -476,21 +580,47 @@ class WeatherRepository {
         var timeList = _safeGetList(el, 'Time');
         if (timeList.isEmpty) return null;
 
-        var item = timeList[0];
-        var valList = _safeGetList(item, 'ElementValue');
-        if (valList.isEmpty) valList = _safeGetList(item, 'elementValue');
-        if (valList.isEmpty) return null;
+        final now = DateTime.now();
 
-        return _readCwaValue(valList[0]);
+        // 🔥 關鍵修正: 遍歷 Time List 找出 "現在" 所在的區間
+        for (var item in timeList) {
+          var startStr = _safeGet(item, 'StartTime') ?? _safeGet(item, 'DataTime');
+          var endStr = _safeGet(item, 'EndTime'); // 有些元素只有 DataTime 無 EndTime
+
+          if (startStr == null) continue;
+          
+          DateTime? start = DateTime.tryParse(startStr.toString());
+          DateTime? end = (endStr != null) ? DateTime.tryParse(endStr.toString()) : null;
+
+          // 情況 1: 有區間 (StartTime ~ EndTime) -> 判斷現在是否在區間內
+          if (start != null && end != null) {
+            if (!now.isBefore(start) && now.isBefore(end)) {
+              var valList = _safeGetList(item, 'ElementValue');
+              if (valList.isEmpty) valList = _safeGetList(item, 'elementValue');
+              return (valList.isNotEmpty) ? _readCwaValue(valList[0]) : null;
+            }
+          }
+          // 情況 2: 只有單點時間 (DataTime) -> 找最近的一筆 (或是未來的第一筆)
+          // (F-D0047 溫度通常是有區間的，這裡保留彈性)
+        }
+
+        // ⚠️ 如果找不到現在的區間 (可能 API 尚未更新)，才勉強用第一筆 (但很有可能過時)
+        // 或者是直接回傳 null 讓後面決定
+        var firstItem = timeList[0];
+        var valList = _safeGetList(firstItem, 'ElementValue');
+        if (valList.isEmpty) valList = _safeGetList(firstItem, 'elementValue');
+        return (valList.isNotEmpty) ? _readCwaValue(valList[0]) : null;
+
       } catch (_) {
         return null;
       }
     }
 
     // 4. 基礎數值
-    double currentTemp = double.tryParse(getElementValue(['T', '溫度']) ?? '') ?? baseData.temperature;
-    double humidity = double.tryParse(getElementValue(['RH', '相對濕度']) ?? '') ?? baseData.humidity;
-    double windSpeed = double.tryParse(getElementValue(['WindSpeed', '風速']) ?? '') ?? baseData.windSpeed;
+    double forecastTemp = double.tryParse(getCurrentForecastValue(['T', '溫度']) ?? '',) ?? baseData.temperature;
+    double stationTemp = realTimeTemp ?? forecastTemp;
+    double humidity = double.tryParse(getCurrentForecastValue(['RH', '相對濕度']) ?? '') ?? baseData.humidity;
+    double windSpeed = double.tryParse(getCurrentForecastValue(['WindSpeed', '風速']) ?? '') ?? baseData.windSpeed;
 
     String wx = baseData.description;
     try {
@@ -518,7 +648,9 @@ class WeatherRepository {
       print("⚠️ 取得當前天氣描述失敗: $e");
     }
 
-    print("📊 基礎數值解析: 溫=$currentTemp, 濕=$humidity, 風=$windSpeed, 況=$wx");
+    final displayTemp = forecastTemp;
+
+    print("📊 基礎數值解析: 溫=$displayTemp, 濕=$humidity, 風=$windSpeed, 況=$wx");
     
 
     // ===========================================================
@@ -538,16 +670,31 @@ class WeatherRepository {
 
       // 逐時溫度
       List<double> cwaHourlyTemps = [];
+      
+      double forecastNowTemp = forecastTemp; // fallback
+
       if (tempPoints.isNotEmpty) {
         final now = DateTime.now();
-        cwaHourlyTemps.add(currentTemp);
-        final future = tempPoints.where((p) => !p.key.isBefore(now)).toList();
+
+        final forecastNowPoint = tempPoints.firstWhere(
+          (p) => !p.key.isBefore(now),
+          orElse: () => tempPoints.last,
+        );
+
+        // ✅ 關鍵：不要再 final
+        forecastNowTemp = forecastNowPoint.value;
+        cwaHourlyTemps.add(forecastNowTemp);
+
+        final future = tempPoints
+            .where((p) => p.key.isAfter(forecastNowPoint.key))
+            .toList()
+          ..sort((a, b) => a.key.compareTo(b.key));
+
         for (var point in future) {
           if (cwaHourlyTemps.length >= 24) break;
           cwaHourlyTemps.add(point.value);
         }
       }
-      if (cwaHourlyTemps.isEmpty) cwaHourlyTemps = List.filled(24, currentTemp);
       while (cwaHourlyTemps.length < 24) cwaHourlyTemps.add(cwaHourlyTemps.last);
       if (cwaHourlyTemps.length > 24) cwaHourlyTemps = cwaHourlyTemps.sublist(0, 24);
 
@@ -627,15 +774,12 @@ class WeatherRepository {
     final cityKey = "$city-$district";
     final tempManager = DailyTempManager(prefs, 'cwa', cityKey: cityKey);
 
-    final todayMinMax = await tempManager.getTodayMinMax(currentTemp);
+    final todayMinMax = await tempManager.getTodayMinMax(stationTemp);
     double todayMaxTemp = todayMinMax['max']!;
     double todayMinTemp = todayMinMax['min']!;
 
-    // 檢查是否為首次查詢
-    bool isFirstQuery = (todayMaxTemp == currentTemp && todayMinTemp == currentTemp);
-
     // 嘗試從 F-C0032-001 獲取基本範圍
-    if (isFirstQuery) {
+   if ((todayMaxTemp - todayMinTemp).abs() < 0.1) {
       final cityMinMaxT = await _fetchCityMinMaxT(city);
       if (cityMinMaxT != null) {
         todayMaxTemp = cityMinMaxT['max']!;
@@ -831,8 +975,8 @@ class WeatherRepository {
       } else {
         dailyForecasts.add(DailyWeather(
           date: date,
-          maxTemp: currentTemp,
-          minTemp: currentTemp,
+          maxTemp: stationTemp,
+          minTemp: stationTemp,
           rainChance: currentRainChance,
           conditionCode: openWeatherMapCode,
         ));
@@ -893,7 +1037,7 @@ class WeatherRepository {
     return WeatherModel(
       latitude: lat,
       longitude: lon, 
-      temperature: currentTemp,
+      temperature: forecastNowTemp,
       tempMax: todayMaxTemp,
       tempMin: todayMinTemp,
       description: wx,
