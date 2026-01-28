@@ -8,7 +8,6 @@ import 'package:http/http.dart' as http;
 
 // 🔥 確保引用你的 Bloc 和 Model
 import 'package:weather_test/bloc/weather_bloc_bloc.dart';
-import 'package:weather_test/data/weather_model.dart'; 
 import 'package:weather_test/data/weather_repository.dart';
 import 'package:weather_test/tool/weather_prompt_helper.dart';
 

@@ -4,9 +4,10 @@ import 'package:http/http.dart' as http;
 import 'package:weather/weather.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:intl/intl.dart';
+import 'Taiwan location mapping.dart';
 import 'weather_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:math'; // 修正: 需要引入 math 來計算 pow 或 log (雖然你的露點公式用的是自定義運算，但引入較保險)
+import 'dart:math';
 
 class WeatherRepository {
   String get openWeatherApiKey => dotenv.env['OPEN_WEATHER_API_KEY'] ?? '';
@@ -196,9 +197,9 @@ class WeatherRepository {
     }
 
     // 3. 今日 + 未來5天（共6天）
-    if (w.dailyForecasts != null && w.dailyForecasts!.isNotEmpty) {
+    if (w.dailyForecasts.isNotEmpty) {
       sb.writeln("\n--- 今日 + 未來 5 天預報 (共 6 天) ---");
-      for (var d in w.dailyForecasts!) {
+      for (var d in w.dailyForecasts) {
         String dateStr = DateFormat('MM/dd (E)', 'zh_TW').format(d.date);
         sb.writeln(
             "📅 $dateStr : 低溫 ${d.minTemp.toStringAsFixed(1)}°C / 高溫 ${d.maxTemp.toStringAsFixed(1)}°C, 降雨機率 ${d.rainChance}%");
@@ -225,7 +226,7 @@ class WeatherRepository {
 
     if (_isInTaiwan(lat, lon)) {
       try {
-        return await _fetchTaiwanTownshipWeather(lat, lon, openWeatherData);
+        return await _fetchTaiwanTownshipWeather(lat, lon, openWeatherData, displayCityName); // 🔥 傳遞 displayCityName
       } catch (e) {
         print("⚠️ 鄉鎮資料取得失敗, 降級使用 OpenWeather: $e");
         return openWeatherData;
@@ -510,21 +511,30 @@ class WeatherRepository {
   // 3. 處理 CWA 台灣資料
   // ===============================================================
   Future<WeatherModel> _fetchTaiwanTownshipWeather(
-    double lat, double lon, WeatherModel baseData) async {
+    double lat, double lon, WeatherModel baseData, String? displayCityName) async { // 🔥 新增參數
     // 1. 取得地點資訊
     List<Placemark> placemarks = await placemarkFromCoordinates(lat, lon);
     Placemark place = placemarks.first;
 
-    String city = (place.administrativeArea ?? "臺北市").replaceAll('台', '臺');
-    String district = place.locality ?? place.subLocality ?? place.subAdministrativeArea ?? "";
+    // 🔥 使用 TaiwanLocationMapping 進行英文轉中文
+    String rawCity = place.administrativeArea ?? "臺北市";
+    String rawDistrict = place.locality ?? place.subLocality ?? place.subAdministrativeArea ?? "";
+    
+    // 轉換成中文地名
+    String city = TaiwanLocationMapping.translateCityToChinese(rawCity).replaceAll('台', '臺');
+    String district = TaiwanLocationMapping.translateDistrictToChinese(rawDistrict);
+    
     if (district == city) district = place.subLocality ?? "";
 
-    print("📍 CWA 請求地點: $city $district");
+    print("📍 CWA 請求地點: $city $district (原始: $rawCity $rawDistrict)");
 
     double? realTimeTemp = await _fetchNearestObservation(lat, lon);
 
     String? dataId = _getCountyDataId(city);
-    if (dataId == null) return baseData;
+    if (dataId == null) {
+      print("⚠️ 無法取得 $city 的 dataId，降級使用 OpenWeather");
+      return baseData;
+    }
 
     // 2. 發送 API 請求
     final uri = Uri.https(
@@ -555,16 +565,14 @@ class WeatherRepository {
         return (_safeGet(loc, 'LocationName')?.toString() ?? "") == district;
       }, orElse: () => null);
 
-      if (targetLocation == null) {
-        targetLocation = locationListRaw.firstWhere((loc) {
+      targetLocation ??= locationListRaw.firstWhere((loc) {
           String name = _safeGet(loc, 'LocationName')?.toString() ?? "";
           return name.contains(district) || district.contains(name);
         });
-      }
     } catch (_) {
       targetLocation = locationListRaw[0];
     }
-    if (targetLocation == null) targetLocation = locationListRaw[0];
+    targetLocation ??= locationListRaw[0];
 
     final weatherElements = _safeGetList(targetLocation, 'WeatherElement');
     
@@ -695,7 +703,9 @@ class WeatherRepository {
           cwaHourlyTemps.add(point.value);
         }
       }
-      while (cwaHourlyTemps.length < 24) cwaHourlyTemps.add(cwaHourlyTemps.last);
+      while (cwaHourlyTemps.length < 24) {
+        cwaHourlyTemps.add(cwaHourlyTemps.last);
+      }
       if (cwaHourlyTemps.length > 24) cwaHourlyTemps = cwaHourlyTemps.sublist(0, 24);
 
       // 逐時降雨
@@ -817,13 +827,11 @@ class WeatherRepository {
     final tomorrowKey = DateFormat('yyyy-MM-dd').format(now.add(const Duration(days: 1)));
 
     final owmDailyMap = <String, DailyWeather>{};
-    if (baseData.dailyForecasts != null) {
-      for (final d in baseData.dailyForecasts!) {
-        final k = DateFormat('yyyy-MM-dd').format(d.date);
-        owmDailyMap[k] = d;
-      }
+    for (final d in baseData.dailyForecasts) {
+      final k = DateFormat('yyyy-MM-dd').format(d.date);
+      owmDailyMap[k] = d;
     }
-
+  
     final dayTemps = <String, List<double>>{};
     if (tempPoints.isNotEmpty) {
       for (final p in tempPoints) {
@@ -1034,6 +1042,18 @@ class WeatherRepository {
 
     print("🎯 最終結果: code=$openWeatherMapCode, 降雨=$currentRainChance%");
 
+    // 🔥 決定最終顯示的城市名稱
+    String finalAreaName;
+    if (displayCityName != null && displayCityName.trim().isNotEmpty) {
+      // 如果有傳入 displayCityName，直接使用（保持英文）
+      finalAreaName = displayCityName;
+      print("✅ 使用傳入的城市名稱: $finalAreaName");
+    } else {
+      // 否則使用中文地名
+      finalAreaName = "$city ${_safeGet(targetLocation, 'LocationName')}";
+      print("✅ 使用中文地名: $finalAreaName");
+    }
+
     return WeatherModel(
       latitude: lat,
       longitude: lon, 
@@ -1041,7 +1061,7 @@ class WeatherRepository {
       tempMax: todayMaxTemp,
       tempMin: todayMinTemp,
       description: wx,
-      areaName: "$city ${_safeGet(targetLocation, 'LocationName')}",
+      areaName: finalAreaName, // 🔥 使用決定好的名稱
       conditionCode: openWeatherMapCode,
       hourlyConditionCodes: hourlyConditionCodes,
       sunrise: baseData.sunrise,
@@ -1263,9 +1283,7 @@ class WeatherRepository {
       }
       
       // 如果沒找到，用上一筆或預設值
-      if (pop == null) {
-        pop = hourly.isEmpty ? 0 : hourly.last;
-      }
+      pop ??= hourly.isEmpty ? 0 : hourly.last;
       
       hourly.add(pop);
     }

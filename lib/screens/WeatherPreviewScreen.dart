@@ -63,12 +63,12 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
   String _formatCityNameForDisplay(CityData city) {
     // 如果沒有國家信息,直接返回城市名
     if (city.country.isEmpty) {
-      return city.name;
+      return _simplifyEnglishName(city.name);
     }
     
     // 解析 country 字段 (格式: "行政區, 國家" 或 "國家")
     List<String> parts = city.country.split(',').map((e) => e.trim()).toList();
-    String cityName = city.name;
+    String cityName = _simplifyEnglishName(city.name);
     String country = parts.isNotEmpty ? parts.last : '';
     
     // 判斷是否為本地國家
@@ -77,7 +77,7 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
     // 🌏 本地國家:只顯示 "城市名, 行政區"
     if (isLocalCountry) {
       if (parts.length >= 2) {
-        String region = parts[0]; // 第一部分是行政區
+        String region = _simplifyEnglishName(parts[0]); // 第一部分是行政區
         // 避免重複顯示 (例如: "大阪市, 大阪府" 可以簡化為 "大阪, 大阪府")
         if (cityName.contains(region) || region.contains(cityName)) {
           return cityName; // 只顯示城市名
@@ -94,6 +94,16 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
     }
     
     return '$cityName, $country';
+  }
+
+  // 🆕 簡化英文地名,移除 District/City/Township 等後綴
+  String _simplifyEnglishName(String name) {
+    return name
+        .replaceAll(' District', '')
+        .replaceAll(' City', '')
+        .replaceAll(' Township', '')
+        .replaceAll(' County', '')
+        .trim();
   }
 
   bool _isLocalCountry(String country) {

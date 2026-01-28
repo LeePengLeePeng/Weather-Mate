@@ -1,11 +1,12 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:weather_test/IconPlayer/WeatherIconPlayer.dart';
 import 'package:weather_test/data/outfit_recommendation_service.dart';
-import 'package:weather_test/tool/localization_helper.dart'; // 🔥 新增
+import 'package:weather_test/tool/localization_helper.dart';
 
-class WeatherView extends StatelessWidget {
+class WeatherView extends StatefulWidget {
   final dynamic weather; 
   final String? displayCityName;
   final Widget? leading; 
@@ -19,16 +20,45 @@ class WeatherView extends StatelessWidget {
     this.trailing,
   });
 
+  @override
+  State<WeatherView> createState() => _WeatherViewState();
+}
+
+class _WeatherViewState extends State<WeatherView> {
+  late DateTime _currentTime;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentTime = DateTime.now();
+    
+    // 🔥 每秒更新時間
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (mounted) {
+        setState(() {
+          _currentTime = DateTime.now();
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
   // 🔥 判斷是否為英文顯示
-  bool get _isEnglish => LocalizationHelper.isEnglishCity(displayCityName ?? weather.areaName);
+  bool get _isEnglish => LocalizationHelper.isEnglishCity(widget.displayCityName ?? widget.weather.areaName);
 
   // 🔥 取得完整星期名稱 (根據語言)
   String _getFullDayName(DateTime date) {
     if (_isEnglish) {
-      return DateFormat('EEEE').format(date); // 英文: Monday, Tuesday...
+      return DateFormat('EEEE').format(date);
     } else {
       const weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
-      return weekdays[date.weekday - 1]; // 中文: 星期一, 星期二...
+      return weekdays[date.weekday - 1];
     }
   }
 
@@ -52,7 +82,7 @@ class WeatherView extends StatelessWidget {
       return WeatherIconPlayer(
         introAsset: 'assets/thunder_loop.webp', 
         loopAsset: 'assets/thunder_loop.webp',
-        replayKey: weather.areaName,
+        replayKey: widget.weather.areaName,
       );
     }
     // 🌧️ 雨天 (包含毛毛雨、大雨)
@@ -60,7 +90,7 @@ class WeatherView extends StatelessWidget {
       return WeatherIconPlayer(
         introAsset: 'assets/rain_intro.webp', 
         loopAsset: 'assets/rain_loop.webp',
-        replayKey: weather.areaName,
+        replayKey: widget.weather.areaName,
       );
     }
     // ❄️ 下雪
@@ -68,7 +98,7 @@ class WeatherView extends StatelessWidget {
       return WeatherIconPlayer(
         introAsset: 'assets/snow_loop.webp', 
         loopAsset: 'assets/snow_loop.webp',
-        replayKey: weather.areaName,
+        replayKey: widget.weather.areaName,
       );
     }
     // 🌫️ 霧/大氣
@@ -76,7 +106,7 @@ class WeatherView extends StatelessWidget {
       return WeatherIconPlayer(
         introAsset: 'assets/Atmosphere.webp', 
         loopAsset: 'assets/Atmosphere.webp',
-        replayKey: weather.areaName,
+        replayKey: widget.weather.areaName,
       );
     }
     // ☀️ 晴天
@@ -84,7 +114,7 @@ class WeatherView extends StatelessWidget {
       return WeatherIconPlayer(
         introAsset: 'assets/sun_intro.webp', 
         loopAsset: 'assets/sun_loop.webp', 
-        replayKey: weather.areaName,
+        replayKey: widget.weather.areaName,
       );
     }
     // 🌤️ 晴時多雲
@@ -92,7 +122,7 @@ class WeatherView extends StatelessWidget {
       return WeatherIconPlayer(
         introAsset: 'assets/sun_cloud_intro.webp', 
         loopAsset: 'assets/sun_cloud_loop.webp',
-        replayKey: weather.areaName,
+        replayKey: widget.weather.areaName,
       );
     }
     // ☁️ 多雲/陰天
@@ -100,7 +130,7 @@ class WeatherView extends StatelessWidget {
       return WeatherIconPlayer(
         introAsset: 'assets/cloud_loop.webp', 
         loopAsset: 'assets/cloud_loop.webp',
-        replayKey: weather.areaName,
+        replayKey: widget.weather.areaName,
       );
     }
     
@@ -181,18 +211,19 @@ class WeatherView extends StatelessWidget {
   // --- 5. 穿著建議邏輯 ---
   OutfitRecommendation _getOutfitRecommendation() {
     return OutfitRecommendationService.getRecommendation(
-      temperature: weather.temperature.round(),
-      conditionCode: weather.conditionCode,
-      humidity: weather.humidity.round(),
-      windSpeed: weather.windSpeed,
-      feelsLike: weather.feelsLike?.round(),
-      latitude: weather.latitude,
-      longitude: weather.longitude,
+      temperature: widget.weather.temperature.round(),
+      conditionCode: widget.weather.conditionCode,
+      humidity: widget.weather.humidity.round(),
+      windSpeed: widget.weather.windSpeed,
+      feelsLike: widget.weather.feelsLike?.round(),
+      latitude: widget.weather.latitude,
+      longitude: widget.weather.longitude,
+      isEnglish: _isEnglish,
     );
   }
 
   Widget _buildRegionIndicator(ClimateRegion region) {
-    final regionName = LocalizationHelper.getClimateRegionName(region.toString().split('.').last, _isEnglish); // 🔥 本地化
+    final regionName = LocalizationHelper.getClimateRegionName(region.toString().split('.').last, _isEnglish);
     
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -211,7 +242,7 @@ class WeatherView extends StatelessWidget {
           ),
           const SizedBox(width: 6),
           Text(
-            regionName, // 🔥 使用本地化名稱
+            regionName,
             style: const TextStyle(
               fontSize: 12,
               color: Color.fromARGB(200, 57, 57, 57),
@@ -226,9 +257,9 @@ class WeatherView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     
-    final weatherIcon = getWeatherIcon(weather.conditionCode);
+    final weatherIcon = getWeatherIcon(widget.weather.conditionCode);
     final OutfitRecommendation outfitData = _getOutfitRecommendation();
-    final texts = LocalizationHelper.getTexts(_isEnglish); // 🔥 取得本地化文字
+    final texts = LocalizationHelper.getTexts(_isEnglish);
 
     return CustomScrollView(
       physics: const BouncingScrollPhysics(),
@@ -236,14 +267,15 @@ class WeatherView extends StatelessWidget {
         SliverPersistentHeader(
           pinned: true,
           delegate: _WeatherHeaderDelegate(
-            weather: weather,
-            displayCityName: displayCityName,
+            weather: widget.weather,
+            displayCityName: widget.displayCityName, // 🔥 修正
             expandedHeight: 530.0,
             topPadding: MediaQuery.of(context).padding.top,
             weatherIcon: weatherIcon,
-            leading: leading, 
-            trailing: trailing,
-            isEnglish: _isEnglish, // 🔥 傳遞語言判斷
+            leading: widget.leading, // 🔥 修正
+            trailing: widget.trailing, // 🔥 修正
+            isEnglish: _isEnglish,
+            currentTime: _currentTime, // 🔥 新增：傳入當前時間
           ),
         ),
 
@@ -259,8 +291,8 @@ class WeatherView extends StatelessWidget {
                   texts['hourForecast']!, 
                   style: TextStyle(
                     color: const Color.fromARGB(255, 57, 57, 57), 
-                    fontSize: _isEnglish ? 16 : 17, // 🔥 中文稍微放大
-                    fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
+                    fontSize: _isEnglish ? 16 : 17,
+                    fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700,
                     letterSpacing: 1.2
                   )
                 ),
@@ -283,18 +315,18 @@ class WeatherView extends StatelessWidget {
                         itemBuilder: (context, index) {
                           final hour = DateTime.now().add(Duration(hours: index));
                           
-                          final temp = (weather.hourlyTemps != null && index < weather.hourlyTemps.length) 
-                            ? weather.hourlyTemps[index] 
-                            : weather.temperature;
+                          final temp = (widget.weather.hourlyTemps != null && index < widget.weather.hourlyTemps.length) 
+                            ? widget.weather.hourlyTemps[index] 
+                            : widget.weather.temperature;
                           
                           int rainChance;
-                          if (weather.hourlyRainChance != null && index < weather.hourlyRainChance!.length) {
-                            rainChance = weather.hourlyRainChance![index];
+                          if (widget.weather.hourlyRainChance != null && index < widget.weather.hourlyRainChance!.length) {
+                            rainChance = widget.weather.hourlyRainChance![index];
                           } else {
-                            if (weather.conditionCode >= 200 && weather.conditionCode < 600) {
-                              rainChance = (weather.rainChance - (index * 2)).clamp(30, 90);
+                            if (widget.weather.conditionCode >= 200 && widget.weather.conditionCode < 600) {
+                              rainChance = (widget.weather.rainChance - (index * 2)).clamp(30, 90);
                             } else {
-                              rainChance = (weather.rainChance - (index * 3)).clamp(0, 40);
+                              rainChance = (widget.weather.rainChance - (index * 3)).clamp(0, 40);
                             }
                           }
                           
@@ -316,10 +348,10 @@ class WeatherView extends StatelessWidget {
                                 const SizedBox(height: 6),
                                 
                                 _getSmallWeatherIcon(
-                                  (weather.hourlyConditionCodes != null &&
-                                  index < weather.hourlyConditionCodes.length)
-                                    ? weather.hourlyConditionCodes[index]
-                                    : weather.conditionCode,
+                                  (widget.weather.hourlyConditionCodes != null &&
+                                  index < widget.weather.hourlyConditionCodes.length)
+                                    ? widget.weather.hourlyConditionCodes[index]
+                                    : widget.weather.conditionCode,
                                 ),
                                 
                                 const SizedBox(height: 4),
@@ -371,8 +403,8 @@ class WeatherView extends StatelessWidget {
                   texts['dayForecast']!, 
                   style: TextStyle(
                     color: const Color.fromARGB(255, 57, 57, 57), 
-                    fontSize: _isEnglish ? 16 : 17, // 🔥 中文稍微放大
-                    fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
+                    fontSize: _isEnglish ? 16 : 17,
+                    fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700,
                     letterSpacing: 1.2
                   )
                 ),
@@ -392,8 +424,8 @@ class WeatherView extends StatelessWidget {
                         physics: const NeverScrollableScrollPhysics(),
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                         
-                        itemCount: (weather.dailyForecasts != null && weather.dailyForecasts.isNotEmpty) 
-                            ? weather.dailyForecasts.length 
+                        itemCount: (widget.weather.dailyForecasts != null && widget.weather.dailyForecasts.isNotEmpty) 
+                            ? widget.weather.dailyForecasts.length 
                             : 7,
                         
                         separatorBuilder: (context, index) => Divider(
@@ -402,7 +434,7 @@ class WeatherView extends StatelessWidget {
                           thickness: 1,
                         ),
                         itemBuilder: (context, index) {
-                          final bool hasRealData = weather.dailyForecasts != null && weather.dailyForecasts.isNotEmpty && index < weather.dailyForecasts.length;
+                          final bool hasRealData = widget.weather.dailyForecasts != null && widget.weather.dailyForecasts.isNotEmpty && index < widget.weather.dailyForecasts.length;
                           
                           DateTime day;
                           int maxTemp;
@@ -411,7 +443,7 @@ class WeatherView extends StatelessWidget {
                           int code;
 
                           if (hasRealData) {
-                            final daily = weather.dailyForecasts[index];
+                            final daily = widget.weather.dailyForecasts[index];
                             day = daily.date;
                             maxTemp = daily.maxTemp.round();
                             minTemp = daily.minTemp.round();
@@ -419,10 +451,10 @@ class WeatherView extends StatelessWidget {
                             code = daily.conditionCode;
                           } else {
                             day = DateTime.now().add(Duration(days: index + 1));
-                            maxTemp = (weather.tempMax - (index * 0.5)).round();
-                            minTemp = (weather.tempMin - (index * 0.3)).round();
-                            rainChance = (weather.rainChance - (index * 5)).clamp(0, 100);
-                            code = weather.conditionCode;
+                            maxTemp = (widget.weather.tempMax - (index * 0.5)).round();
+                            minTemp = (widget.weather.tempMin - (index * 0.3)).round();
+                            rainChance = (widget.weather.rainChance - (index * 5)).clamp(0, 100);
+                            code = widget.weather.conditionCode;
                           }
                           
                           return Padding(
@@ -432,7 +464,7 @@ class WeatherView extends StatelessWidget {
                                 SizedBox(
                                   width: 100,
                                   child: Text(
-                                    LocalizationHelper.getDayLabel(day, _isEnglish), // 🔥 本地化
+                                    LocalizationHelper.getDayLabel(day, _isEnglish),
                                     style: TextStyle(
                                       color: const Color.fromARGB(255, 57, 57, 57),
                                       fontSize: 16,
@@ -517,8 +549,8 @@ class WeatherView extends StatelessWidget {
                       texts['outfitSuggestion']!,
                       style: TextStyle(
                         color: const Color.fromARGB(255, 57, 57, 57),
-                        fontSize: _isEnglish ? 16 : 17, // 🔥 中文稍微放大
-                        fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
+                        fontSize: _isEnglish ? 16 : 17,
+                        fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700,
                         letterSpacing: 1.2,
                       ),
                     ),
@@ -560,15 +592,15 @@ class WeatherView extends StatelessWidget {
                                       texts['outfitTitle']!,
                                       style: TextStyle(
                                         color: const Color.fromARGB(200, 57, 57, 57),
-                                        fontSize: _isEnglish ? 14 : 15, // 🔥 中文稍微放大
-                                        fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
+                                        fontSize: _isEnglish ? 14 : 15,
+                                        fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700,
                                       ),
                                     ),
                                   ],
                                 ),
                                 const SizedBox(height: 12),
                                 Text(
-                                  LocalizationHelper.translateOutfitSuggestion(outfitData.suggestion, _isEnglish), // 🔥 有翻譯
+                                  LocalizationHelper.translateOutfitSuggestion(outfitData.suggestion, _isEnglish),
                                   style: const TextStyle(
                                     color: Color.fromARGB(255, 57, 57, 57),
                                     fontSize: 14,
@@ -627,33 +659,33 @@ class WeatherView extends StatelessWidget {
                   texts['details']!, 
                   style: TextStyle(
                     color: const Color.fromARGB(255, 57, 57, 57), 
-                    fontSize: _isEnglish ? 16 : 17, // 🔥 中文稍微放大
-                    fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700, // 🔥 中文加粗
+                    fontSize: _isEnglish ? 16 : 17,
+                    fontWeight: _isEnglish ? FontWeight.w600 : FontWeight.w700,
                     letterSpacing: 1.2
                   )
                 ),
                 const SizedBox(height: 10),
 
                 Row(children: [
-                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: texts['tempMin']!, value: '${weather.tempMin.round()}°C')),
+                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: texts['tempMin']!, value: '${widget.weather.tempMin.round()}°C')),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: texts['tempMax']!, value: '${weather.tempMax.round()}°C')),
+                  Expanded(child: _buildInfoCard(icon: Icons.thermostat, title: texts['tempMax']!, value: '${widget.weather.tempMax.round()}°C')),
                 ]),
                 
                 const SizedBox(height: 10),
                 
                 Row(children: [
-                  Expanded(child: _buildInfoCard(icon: Icons.wb_twilight, title: texts['sunrise']!, value: DateFormat('HH:mm').format(weather.sunrise))),
+                  Expanded(child: _buildInfoCard(icon: Icons.wb_twilight, title: texts['sunrise']!, value: DateFormat('HH:mm').format(widget.weather.sunrise))),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildInfoCard(icon: Icons.wb_twilight, title: texts['sunset']!, value: DateFormat('HH:mm').format(weather.sunset))),
+                  Expanded(child: _buildInfoCard(icon: Icons.wb_twilight, title: texts['sunset']!, value: DateFormat('HH:mm').format(widget.weather.sunset))),
                 ]),
 
                 const SizedBox(height: 10),
 
                 Row(children: [
-                  Expanded(child: _buildInfoCard(icon: Icons.water_drop_outlined, title: texts['humidity']!, value: '${weather.humidity.round()}%')),
+                  Expanded(child: _buildInfoCard(icon: Icons.water_drop_outlined, title: texts['humidity']!, value: '${widget.weather.humidity.round()}%')),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildInfoCard(icon: Icons.air, title: texts['wind']!, value: '${weather.windSpeed.round()} km/h')),
+                  Expanded(child: _buildInfoCard(icon: Icons.air, title: texts['wind']!, value: '${widget.weather.windSpeed.round()} km/h')),
                 ]),
                 
                 const SizedBox(height: 10),
@@ -662,29 +694,29 @@ class WeatherView extends StatelessWidget {
                   Expanded(child: _buildInfoCard(
                     icon: Icons.thermostat, 
                     title: texts['feelsLike']!,
-                    value: weather.feelsLike != null 
-                      ? '${weather.feelsLike!.round()}°C' 
-                      : '${(weather.temperature - 2).round()}°C'
+                    value: widget.weather.feelsLike != null 
+                      ? '${widget.weather.feelsLike!.round()}°C' 
+                      : '${(widget.weather.temperature - 2).round()}°C'
                   )),
                   const SizedBox(width: 10),
-                  Expanded(child: _buildInfoCard(icon: Icons.wb_sunny_outlined, title: texts['uvIndex']!, value: '${(weather.temperature * 0.2).round()}')),
+                  Expanded(child: _buildInfoCard(icon: Icons.wb_sunny_outlined, title: texts['uvIndex']!, value: '${(widget.weather.temperature * 0.2).round()}')),
                 ]),
                 
-                if (weather.dewPoint != null || weather.windDirection != null) ...[
+                if (widget.weather.dewPoint != null || widget.weather.windDirection != null) ...[
                   const SizedBox(height: 10),
                   Row(children: [
-                    if (weather.dewPoint != null)
-                      Expanded(child: _buildInfoCard(icon: Icons.water, title: texts['dewPoint']!, value: '${weather.dewPoint!.round()}°C'))
+                    if (widget.weather.dewPoint != null)
+                      Expanded(child: _buildInfoCard(icon: Icons.water, title: texts['dewPoint']!, value: '${widget.weather.dewPoint!.round()}°C'))
                     else
                       const Expanded(child: SizedBox()),
                     
                     const SizedBox(width: 10),
                     
-                    if (weather.windDirection != null)
+                    if (widget.weather.windDirection != null)
                       Expanded(child: _buildInfoCard(
                         icon: Icons.navigation, 
                         title: texts['windDir']!, 
-                        value: LocalizationHelper.translateWindDirection(weather.windDirection!, _isEnglish) // 🔥 翻譯風向
+                        value: LocalizationHelper.translateWindDirection(widget.weather.windDirection!, _isEnglish)
                       ))
                     else
                       const Expanded(child: SizedBox()),
@@ -711,14 +743,16 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
   final Widget weatherIcon;
   final Widget? leading; 
   final Widget? trailing;
-  final bool isEnglish; // 🔥 新增
+  final bool isEnglish;
+  final DateTime currentTime; // 🔥 新增：接收當前時間
 
   _WeatherHeaderDelegate({
     required this.weather,
     required this.expandedHeight,
     required this.topPadding,
     required this.weatherIcon,
-    required this.isEnglish, // 🔥 新增
+    required this.isEnglish,
+    required this.currentTime, // 🔥 新增
     this.displayCityName,
     this.leading,
     this.trailing,
@@ -728,17 +762,17 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
      return LocalizationHelper.getOutfitSuggestion(
        weather.temperature.round(), 
        weather.conditionCode,
-       isEnglish // 🔥 使用傳入的語言判斷
+       isEnglish
      );
   }
 
-  // 🔥 新增：取得完整星期名稱
+  // 🔥 取得完整星期名稱
   String _getFullDayName(DateTime date) {
     if (isEnglish) {
-      return DateFormat('EEEE').format(date); // 英文: Monday, Tuesday...
+      return DateFormat('EEEE').format(date);
     } else {
       const weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
-      return weekdays[date.weekday - 1]; // 中文: 星期一, 星期二...
+      return weekdays[date.weekday - 1];
     }
   }
 
@@ -780,11 +814,13 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
             children: [
               Positioned(
                 top: areaTop, 
-                left: 0, 
-                right: 0, 
+                left: 20,
+                right: 20,
                 child: Text(
                   displayCityName ?? weather.areaName,
-                  textAlign: TextAlign.center, 
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontSize: 20, 
                     fontWeight: FontWeight.bold, 
@@ -843,7 +879,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                             )
                           ),
                           Text(
-                            LocalizationHelper.translateWeatherDescription(weather.description, isEnglish).toUpperCase(), // 🔥 翻譯天氣描述
+                            LocalizationHelper.translateWeatherDescription(weather.description, isEnglish).toUpperCase(),
                             style: const TextStyle(
                               fontSize: 30, 
                               fontWeight: FontWeight.w500, 
@@ -852,7 +888,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                           ),
                           const SizedBox(height: 5),
                           Text(
-                            '${DateFormat('MM/dd').add_jm().format(weather.date)}\n${_getFullDayName(weather.date)}', 
+                            '${DateFormat('MM/dd').add_jm().format(currentTime)}\n${_getFullDayName(currentTime)}', // 🔥 使用 currentTime
                             textAlign: TextAlign.center, 
                             style: const TextStyle(
                               fontSize: 18, 
@@ -900,7 +936,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                           ),
                           const SizedBox(height: 10),
                           Text(
-                            LocalizationHelper.translateWeatherDescription(weather.description, isEnglish), // 🔥 翻譯天氣描述
+                            LocalizationHelper.translateWeatherDescription(weather.description, isEnglish),
                             style: const TextStyle(
                               fontSize: 25, 
                               fontWeight: FontWeight.w500, 
@@ -941,5 +977,5 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   @override
   bool shouldRebuild(covariant _WeatherHeaderDelegate oldDelegate) => 
-    oldDelegate.weather != weather;
+    oldDelegate.weather != weather || oldDelegate.currentTime != currentTime; // 🔥 加入 currentTime 的比較
 }

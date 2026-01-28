@@ -18,8 +18,16 @@ class CityData {
   final String country;
   final double latitude;
   final double longitude;
+  final bool isEnglish; // 🔥 新增：記錄搜尋時的語言
 
-  CityData({required this.id, required this.name, required this.country, required this.latitude, required this.longitude});
+  CityData({
+    required this.id, 
+    required this.name, 
+    required this.country, 
+    required this.latitude, 
+    required this.longitude,
+    this.isEnglish = false, // 🔥 預設為 false（中文）
+  });
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -27,6 +35,7 @@ class CityData {
     'country': country,
     'latitude': latitude,
     'longitude': longitude,
+    'isEnglish': isEnglish, // 🔥 保存語言設定
   };
 
   factory CityData.fromJson(Map<String, dynamic> json) {
@@ -40,6 +49,7 @@ class CityData {
       country: json['country'] ?? '',
       latitude: lat,
       longitude: lon,
+      isEnglish: json['isEnglish'] ?? false, // 🔥 讀取語言設定
     );
   }
 }
@@ -65,6 +75,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   bool _isLoading = false;
   String _errorMessage = '';
   bool _isFocused = false;
+  bool _currentSearchIsEnglish = false; // 🔥 記錄當前搜尋的語言
   
   Timer? _debounce;
   
@@ -197,7 +208,8 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     }
     
     // 🔥 根據搜尋語言設定 geocoding locale
-    if (_isEnglish(query)) {
+    _currentSearchIsEnglish = _isEnglish(query); // 🔥 記錄當前搜尋語言
+    if (_currentSearchIsEnglish) {
       // 英文搜尋 → 使用英文結果
       await setLocaleIdentifier("en_US");
       debugPrint("🌍 設定 locale 為 en_US");
@@ -266,6 +278,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
         if (processedCount >= 30) break;
         
         try {
+          // 🔥 移除 localeIdentifier 參數，因為 setLocaleIdentifier 已經設定了全域 locale
           List<Placemark> placemarks = await placemarkFromCoordinates(
             loc.latitude, 
             loc.longitude
@@ -316,6 +329,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
               country: countryInfo,
               latitude: loc.latitude,
               longitude: loc.longitude,
+              isEnglish: _currentSearchIsEnglish, // 🔥 記錄語言設定
             );
           }
           
@@ -372,7 +386,6 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       debugPrint("❌ 搜尋錯誤: $e");
     }
   }
-
   String _getDistrictKey({
     required String country,
     required String administrativeArea,
@@ -432,14 +445,14 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
         
         // 嘗試加上「國」
         if (!query.contains('國')) {
-          variations.add('${query}國');
+          variations.add('$query國');
         }
       } else if (query.length <= 4) {
         // 中等長度(如「班夫」「京都」)
         variations.add(query);
         
         if (!query.contains('市') && !query.contains('區') && !query.contains('縣')) {
-          variations.add('${query}市');
+          variations.add('$query市');
         }
         
         // 嘗試主要國家
@@ -449,7 +462,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       } else {
         // 長查詢
         variations.add(query);
-        variations.add('${query}市');
+        variations.add('$query市');
         variations.add('台灣$query');
         variations.add('$query Japan');
         variations.add('$query China');
@@ -782,101 +795,177 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   }
   
   Widget _buildListWithCurrentLocation() {
-    int totalCount = 1 + _savedCities.length;
-
-    return SlidableAutoCloseBehavior(
-      child: ListView.separated(
-        padding: const EdgeInsets.all(16),
-        itemCount: totalCount,
-        separatorBuilder: (_, __) => const SizedBox(height: 10),
-        itemBuilder: (context, index) {
-          if (index == 0) {
-            return Container(
-              decoration: BoxDecoration(
-                color: Colors.blueAccent.withOpacity(0.2), 
-                borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: Colors.blueAccent.withOpacity(0.5), width: 1),
-              ),
-              child: ListTile(
-                leading: const Icon(Icons.my_location, color: Colors.blueAccent),
-                title: const Text("目前位置", style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 18, fontWeight: FontWeight.bold)),
-                subtitle: const Text("GPS 定位", style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 12)),
-                onTap: _useCurrentLocation, 
-              ),
-            );
-          }
-
-          final city = _savedCities[index - 1]; 
-          
-          return Slidable(
-            key: Key(city.id),
-            groupTag: 'saved_cities_list', 
-            endActionPane: ActionPane(
-              motion: const BehindMotion(), 
-              extentRatio: 0.3, 
-              children: [
-                CustomSlidableAction(
-                  onPressed: (context) => _removeCity(city),
-                  backgroundColor: Colors.transparent, 
-                  foregroundColor: Colors.white,
-                  child: Container(
-                    width: 50, 
-                    height: 50, 
-                    decoration: BoxDecoration(
-                      color: Colors.red, 
-                      borderRadius: BorderRadius.circular(12), 
-                    ),
-                    child: const Icon(Icons.delete, color: Colors.white, size: 28),
-                  ),
-                ),
-              ],
+    return Column(
+      children: [
+        // 🔥 固定的 "目前位置"（不參與排序）
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.blueAccent.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(15),
+              border: Border.all(color: Colors.blueAccent.withOpacity(0.5), width: 1),
             ),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.4),
-                borderRadius: BorderRadius.circular(15), 
-                border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
+            child: ListTile(
+              leading: const Icon(Icons.my_location, color: Colors.blueAccent),
+              title: const Text(
+                "目前位置",
+                style: TextStyle(
+                  color: Color.fromARGB(255, 57, 57, 57),
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-              child: 
-                ListTile(
-                  title: Text(
-                    city.name,
-                    style: const TextStyle(
-                      color: Colors.black87,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  subtitle: city.country.isNotEmpty
-                      ? Text(
-                          city.country,
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 13,
+              subtitle: const Text(
+                "GPS 定位",
+                style: TextStyle(color: Color.fromARGB(255, 57, 57, 57), fontSize: 12),
+              ),
+              onTap: _useCurrentLocation,
+            ),
+          ),
+        ),
+        
+        // 🔥 可排序的城市列表
+        Expanded(
+          child: _savedCities.isEmpty
+              ? const SizedBox() // 如果沒有儲存的城市，顯示空白
+              : SlidableAutoCloseBehavior(
+                  child: ReorderableListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    itemCount: _savedCities.length,
+                    proxyDecorator: (child, index, animation) {
+                      // 🔥 自訂拖動時的外觀，保持原本的泡泡質感
+                      return AnimatedBuilder(
+                        animation: animation,
+                        builder: (context, child) {
+                          final double elevation = lerpDouble(0, 6, Curves.easeInOut.transform(animation.value))!;
+                          final double scale = lerpDouble(1.0, 1.05, Curves.easeInOut.transform(animation.value))!;
+                          
+                          return Transform.scale(
+                            scale: scale,
+                            child: Material(
+                              elevation: elevation,
+                              color: Colors.transparent,
+                              borderRadius: BorderRadius.circular(15),
+                              child: child,
+                            ),
+                          );
+                        },
+                        child: child,
+                      );
+                    },
+                    onReorder: (oldIndex, newIndex) {
+                      setState(() {
+                        // 🔥 簡化的排序邏輯（不需要考慮 "目前位置"）
+                        final adjustedNewIndex = newIndex > oldIndex ? newIndex - 1 : newIndex;
+                        
+                        final city = _savedCities.removeAt(oldIndex);
+                        _savedCities.insert(adjustedNewIndex, city);
+                        
+                        _saveToPrefs();
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      final city = _savedCities[index];
+
+                      return Container(
+                        key: Key(city.id), // 🔥 每個項目都要有唯一 key
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: Slidable(
+                          groupTag: 'saved_cities_list',
+                          endActionPane: ActionPane(
+                            motion: const BehindMotion(),
+                            extentRatio: 0.3,
+                            children: [
+                              CustomSlidableAction(
+                                onPressed: (context) => _removeCity(city),
+                                backgroundColor: Colors.transparent,
+                                foregroundColor: Colors.white,
+                                child: Container(
+                                  width: 50,
+                                  height: 50,
+                                  decoration: BoxDecoration(
+                                    color: Colors.red,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: const Icon(Icons.delete, color: Colors.white, size: 28),
+                                ),
+                              ),
+                            ],
                           ),
-                        )
-                      : null,
-                  trailing: const Icon(Icons.arrow_forward_ios, color: Colors.black54, size: 14
-                ),
-                onTap: () {
-                  final displayName = _formatCityNameForDisplay(city);
-                  print("🏙️ 從列表選擇城市: $displayName");
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.4),
+                              borderRadius: BorderRadius.circular(15),
+                              border: Border.all(color: Colors.white.withOpacity(0.5), width: 1),
+                            ),
+                            child: ListTile(
+                              leading: const Icon(
+                                Icons.drag_handle, // 🔥 拖動手柄圖示
+                                color: Colors.black54,
+                              ),
+                              title: Text(
+                                city.name,
+                                style: const TextStyle(
+                                  color: Colors.black87,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: city.country.isNotEmpty
+                                  ? Text(
+                                      city.country,
+                                      style: TextStyle(
+                                        color: Colors.grey[600],
+                                        fontSize: 13,
+                                      ),
+                                    )
+                                  : null,
+                              trailing: const Icon(
+                                Icons.arrow_forward_ios,
+                                color: Colors.black54,
+                                size: 14,
+                              ),
+                              onTap: () async {
+                                // 🔥 根據保存的語言設定設置 locale
+                                if (city.isEnglish) {
+                                  await setLocaleIdentifier("en_US");
+                                  debugPrint("🌍 城市使用英文顯示，設定 locale 為 en_US");
+                                } else {
+                                  await setLocaleIdentifier("zh_TW");
+                                  debugPrint("🌍 城市使用中文顯示，設定 locale 為 zh_TW");
+                                }
 
-                  context.read<WeatherBlocBloc>().add(FetchWeather(Position(
-                    latitude: city.latitude,
-                    longitude: city.longitude,
-                    timestamp: DateTime.now(),
-                    accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0, isMocked: false
+                                final displayName = _formatCityNameForDisplay(city);
+                                print("🏙️ 從列表選擇城市: $displayName (isEnglish: ${city.isEnglish})");
+
+                                context.read<WeatherBlocBloc>().add(FetchWeather(
+                                      Position(
+                                        latitude: city.latitude,
+                                        longitude: city.longitude,
+                                        timestamp: DateTime.now(),
+                                        accuracy: 0,
+                                        altitude: 0,
+                                        heading: 0,
+                                        speed: 0,
+                                        speedAccuracy: 0,
+                                        altitudeAccuracy: 0,
+                                        headingAccuracy: 0,
+                                        isMocked: false,
+                                      ),
+                                      cityName: displayName,
+                                    ));
+                                widget.onCitySelected?.call();
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                  cityName: displayName,  
-                ));
-                widget.onCitySelected?.call();
-                },
-              ),
-            ),
-          );
-        },
-      ),
+                ),
+        ),
+      ],
     );
   }
 
@@ -884,12 +973,12 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   String _formatCityNameForDisplay(CityData city) {
     // 如果沒有國家信息,直接返回城市名
     if (city.country.isEmpty) {
-      return city.name;
+      return _simplifyEnglishName(city.name);
     }
     
     // 解析 country 字段 (格式: "行政區, 國家" 或 "國家")
     List<String> parts = city.country.split(',').map((e) => e.trim()).toList();
-    String cityName = city.name;
+    String cityName = _simplifyEnglishName(city.name);
     String country = parts.isNotEmpty ? parts.last : '';
     
     // 判斷是否為本地國家
@@ -898,7 +987,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     // 🌏 本地國家:只顯示 "城市名, 行政區"
     if (isLocalCountry) {
       if (parts.length >= 2) {
-        String region = parts[0]; // 第一部分是行政區
+        String region = _simplifyEnglishName(parts[0]); // 第一部分是行政區
         // 避免重複顯示 (例如: "大阪市, 大阪府" 可以簡化為 "大阪, 大阪府")
         if (cityName.contains(region) || region.contains(cityName)) {
           return cityName; // 只顯示城市名
@@ -915,6 +1004,16 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     }
     
     return '$cityName, $country';
+  }
+
+  // 🆕 簡化英文地名,移除 District/City/Township 等後綴
+  String _simplifyEnglishName(String name) {
+    return name
+        .replaceAll(' District', '')
+        .replaceAll(' City', '')
+        .replaceAll(' Township', '')
+        .replaceAll(' County', '')
+        .trim();
   }
 
   Widget _buildSearchResults() {
@@ -965,8 +1064,17 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                   });
 
                   if (mounted) {
+                    // 🔥 根據保存的語言設定設置 locale
+                    if (city.isEnglish) {
+                      await setLocaleIdentifier("en_US");
+                      debugPrint("🌍 城市使用英文顯示，設定 locale 為 en_US");
+                    } else {
+                      await setLocaleIdentifier("zh_TW");
+                      debugPrint("🌍 城市使用中文顯示，設定 locale 為 zh_TW");
+                    }
+                    
                     final displayName = _formatCityNameForDisplay(city);
-                    print("🏙️ 準備顯示城市: $displayName");
+                    print("🏙️ 準備顯示城市: $displayName (isEnglish: ${city.isEnglish})");
                     context.read<WeatherBlocBloc>().add(FetchWeather(Position(
                       latitude: city.latitude,
                       longitude: city.longitude,

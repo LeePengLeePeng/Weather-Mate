@@ -4,7 +4,8 @@ class WeatherPromptHelper {
   
   static String generateSystemPrompt(WeatherModel w) {
     // 日期格式化
-    String todayStr = "${w.date.month}/${w.date.day}";
+    String weekday = _getWeekday(w.date); 
+    String todayStr = "${w.date.month}/${w.date.day} ($weekday)";
     
     String hourlyTrend = _formatHourlyData(w);
     String dailyDigest = _formatDailyDigest(w);
@@ -75,8 +76,8 @@ class WeatherPromptHelper {
     
     for (int i = 0; i < limit; i++) {
       String temp = w.hourlyTemps[i].round().toString();
-      String rain = (w.hourlyRainChance != null && w.hourlyRainChance!.length > i)
-          ? "${w.hourlyRainChance![i]}%" 
+      String rain = (w.hourlyRainChance.length > i)
+          ? "${w.hourlyRainChance[i]}%" 
           : "?";
       sb.writeln("   • +${i+1}h: $temp°C, rain $rain");
     }
@@ -85,6 +86,20 @@ class WeatherPromptHelper {
 
   static String _formatDailyDigest(WeatherModel w) {
     StringBuffer sb = StringBuffer();
+
+    // ✅ 修正 1: 優先檢查是否有現成的 dailyForecasts (這包含未來一週資料)
+    if (w.dailyForecasts.isNotEmpty) {
+      for (var day in w.dailyForecasts) {
+        // 🔥 修改這裡：加上星期幾
+        String wd = _getWeekday(day.date);
+        String dateLabel = "${day.date.month}/${day.date.day} ($wd)";
+        
+        sb.writeln("   • $dateLabel: ${day.minTemp.round()}-${day.maxTemp.round()}°C, rain ${day.rainChance}%");
+      }
+      return sb.toString();
+    }
+
+    // 🔽 如果真的沒有 dailyForecasts，才使用舊邏輯 (從 hourly 硬算)
     if (w.hourlyTemps.length < 24) return "   (Insufficient Data)";
 
     int days = w.hourlyTemps.length ~/ 8; 
@@ -99,8 +114,8 @@ class WeatherPromptHelper {
       double minT = dayTemps.reduce((curr, next) => curr < next ? curr : next);
       
       String rainDesc = "";
-      if (w.hourlyRainChance != null && w.hourlyRainChance!.length >= end) {
-        List<int> dayRain = w.hourlyRainChance!.sublist(start, end);
+      if (w.hourlyRainChance.length >= end) {
+        List<int> dayRain = w.hourlyRainChance.sublist(start, end);
         int maxRain = dayRain.reduce((curr, next) => curr > next ? curr : next);
         rainDesc = "rain $maxRain%";
       }
@@ -111,5 +126,10 @@ class WeatherPromptHelper {
       sb.writeln("   • $dateLabel: ${minT.round()}-${maxT.round()}°C, $rainDesc");
     }
     return sb.toString();
+  }
+
+  static String _getWeekday(DateTime date) {
+    const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    return weekdays[date.weekday - 1];
   }
 }
