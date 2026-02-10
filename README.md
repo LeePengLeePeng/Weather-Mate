@@ -1,7 +1,8 @@
 # Weather-Mate
 
-一款以 **台灣使用者為核心設計** 的智慧天氣 App，  
-結合官方氣象資料、動畫角色互動、AI 助理，讓天氣資訊變得直覺又有溫度。
+<img src="assets/icon/icon.png" width="120" />
+為台灣氣候設計的智慧天氣 App  
+結合官方氣象資料、3D 天氣角色動畫與 AI 穿搭助理
 
 ---
 
@@ -100,10 +101,9 @@ AI 並不直接作為資料來源，而是作為「氣象資料解釋層（Inter
 | 天氣資料來源 | CWA API、OpenWeatherMap（區域判斷整合） |
 | AI 系統 | Groq API（基於 App 內部資料生成回答） |
 | 定位系統 | Geolocator（Device Location Services） |
-| 狀態管理 | Flutter Stateful Widgets + Future/Async 資料流控制 |
+| 狀態管理 | Flutter Stateful Widgets + Asynchronous Data Flow |
 | 本地儲存 | 使用者城市資料 |
 | 測試平台 | iOS（實機測試） |
-| 跨平台狀態 | Flutter 架構，尚未針對 Android / Web 進行裝置實測 |
 ---
 
 ## App Preview
