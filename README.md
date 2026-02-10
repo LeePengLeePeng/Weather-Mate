@@ -108,22 +108,6 @@ AI 並不直接作為資料來源，而是作為「氣象資料解釋層（Inter
 
 ## App Preview
 
-### Current Weather Overview
-![Current Weather](screenshots/01_current_weather.png)
-
-### 5-Day Forecast
-![5 Day Forecast](screenshots/02_5day_forecast.png)
-
-### Weather Metrics Panel
-![Weather Metrics](screenshots/03_weather_metrics.png)
-
-### AI Weather Assistant
-![AI Assistant](screenshots/04_ai_weather.png)
-
-### AI Conversation History
-![AI History](screenshots/05_ai_conversation_history.png)
-
-### Saved Locations Manager
-![Saved Locations](screenshots/06_saved_locations_manager.png)
+<table> <tr> <th align="center">即時天氣總覽</th> <th align="center">未來五日天氣預報</th> <th align="center">天氣細節資訊面板</th> </tr> <tr> <td align="center"><img src="screenshots/01_current_weather.PNG" width="260"></td> <td align="center"><img src="screenshots/02_5day_forecast.PNG" width="260"></td> <td align="center"><img src="screenshots/03_weather_details.PNG" width="260"></td> </tr> <tr> <th align="center">AI 天氣穿搭助理</th> <th align="center">AI 對話紀錄檢視</th> <th align="center">儲存地區管理</th> </tr> <tr> <td align="center"><img src="screenshots/04_ai_weather.PNG" width="260"></td> <td align="center"><img src="screenshots/05_ai_conversation_history.PNG" width="260"></td> <td align="center"><img src="screenshots/06_saved_locations_manager.PNG" width="260"></td> </tr> </table>
 
 ---
