@@ -1,10 +1,9 @@
-// 1. 新增這個類別：用來存「每一天」的精簡預報資料
 class DailyWeather {
-  final DateTime date;        // 日期 (用來顯示 Fri, Sat...)
+  final DateTime date;        // 日期
   final double maxTemp;       // 當日最高溫
   final double minTemp;       // 當日最低溫
   final int rainChance;       // 當日降雨機率
-  final int conditionCode;    // 當日天氣代碼 (用來顯示 Icon)
+  final int conditionCode;    // 當日天氣代碼
 
   DailyWeather({
     required this.date,
@@ -15,7 +14,6 @@ class DailyWeather {
   });
 }
 
-// 2. 修改原本的 Model
 class WeatherModel {
   final double? latitude;
   final double? longitude; 
@@ -41,7 +39,7 @@ class WeatherModel {
   final String? comfort;          // 舒適度指數
   final String? windDirection;    // 風向
   final String? weatherForecast;  // 天氣預報綜合描述
-  
+  final int timezoneOffset;
   final List<DailyWeather> dailyForecasts; 
 
   WeatherModel({
@@ -59,9 +57,9 @@ class WeatherModel {
     required this.humidity,
     required this.windSpeed,
     required this.hourlyTemps,
+    required this.timezoneOffset,
     this.rainChance = 0,
     
-    // 這裡給預設值 []，防止 Null Error
     this.hourlyRainChance = const [], 
     this.hourlyConditionCodes = const [],
     this.dewPoint,

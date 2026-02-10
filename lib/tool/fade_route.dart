@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 Route<T> createFadeRoute<T>(Widget page) {
-  return PageRouteBuilder<T>( // 這裡也要加上 <T>
+  return PageRouteBuilder<T>(
     pageBuilder: (context, animation, secondaryAnimation) => page,
     transitionsBuilder: (context, animation, secondaryAnimation, child) {
       const begin = 0.0;

@@ -20,7 +20,7 @@ class WeatherIconPlayer extends StatefulWidget {
 }
 
 class _WeatherIconPlayerState extends State<WeatherIconPlayer> {
-  int _playState = 0; // 0=準備中, 1=播Intro, 2=播Loop
+  int _playState = 0;
   double _opacity = 0.0;
   int _playbackId = 0;
   
@@ -65,7 +65,6 @@ class _WeatherIconPlayerState extends State<WeatherIconPlayer> {
     await Future.delayed(const Duration(milliseconds: 50));
 
     try {
-      // 📊 取得總幀數
       if (_frameCountCache.containsKey(widget.introAsset)) {
         _totalFrames = _frameCountCache[widget.introAsset]!;
       } else {
@@ -76,34 +75,31 @@ class _WeatherIconPlayerState extends State<WeatherIconPlayer> {
         _frameCountCache[widget.introAsset] = _totalFrames!;
         codec.dispose();
         
-        debugPrint("📊 ${widget.introAsset}");
+        debugPrint(" ${widget.introAsset}");
         debugPrint("   幀數: $_totalFrames frames");
       }
 
       if (mounted) {
-        // 🔥 關鍵改動：清除快取後等待一下
         final introProvider = AssetImage(widget.introAsset);
         await introProvider.evict();
         await Future.delayed(const Duration(milliseconds: 100));
         
-        // 開始播放 Intro
         setState(() {
           _playState = 1;
           _opacity = 1.0;
           _playbackId++;
         });
 
-        // ⏱️ 安全計時器：防止 frameBuilder 失效
         final safetyDuration = Duration(milliseconds: (_totalFrames! * 40) + 800);
         _safetyTimer = Timer(safetyDuration, () {
           if (mounted && !_introCompleted) {
-            debugPrint("⚠️ 安全計時器觸發，強制切換到 Loop");
+            debugPrint("安全計時器觸發，強制切換到 Loop");
             _switchToLoop();
           }
         });
       }
     } catch (e) {
-      debugPrint("❌ 動畫載入失敗: $e");
+      debugPrint("動畫載入失敗: $e");
       if (mounted) {
         setState(() {
           _playState = 2;
@@ -113,13 +109,11 @@ class _WeatherIconPlayerState extends State<WeatherIconPlayer> {
     }
   }
 
-  // 🎯 偵測 Intro 播放完成
   void _onIntroFrameUpdate(int currentFrame) {
     if (_introCompleted || _totalFrames == null) return;
     
-    // 當播放到最後一幀時切換
     if (currentFrame >= _totalFrames! - 1) {
-      debugPrint("✅ Intro 播放完成 (frame $currentFrame/$_totalFrames)");
+      debugPrint("Intro 播放完成 (frame $currentFrame/$_totalFrames)");
       _introCompleted = true;
       _switchToLoop();
     }
@@ -129,10 +123,8 @@ class _WeatherIconPlayerState extends State<WeatherIconPlayer> {
     _safetyTimer?.cancel();
     
     if (mounted) {
-      // 🔥 預載 Loop 動畫
       await precacheImage(AssetImage(widget.loopAsset), context);
       
-      // 等待一幀確保預載完成
       await Future.delayed(const Duration(milliseconds: 16));
       
       if (mounted) {
@@ -148,7 +140,6 @@ class _WeatherIconPlayerState extends State<WeatherIconPlayer> {
     Widget content;
 
     if (_playState == 1) {
-      // 🎬 播放 Intro 動畫
       content = Image.asset(
         widget.introAsset,
         key: ValueKey('${widget.introAsset}_$_playbackId'),
@@ -156,19 +147,16 @@ class _WeatherIconPlayerState extends State<WeatherIconPlayer> {
         gaplessPlayback: false,
         frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
           if (frame != null) {
-            // 🎯 追蹤當前幀數
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _onIntroFrameUpdate(frame);
             });
             return child;
           }
           
-          // 載入中顯示透明佔位
           return const SizedBox();
         },
       );
     } else if (_playState == 2) {
-      // 🔄 播放 Loop 動畫
       content = Image.asset(
         widget.loopAsset,
         key: ValueKey(widget.loopAsset),
@@ -176,7 +164,6 @@ class _WeatherIconPlayerState extends State<WeatherIconPlayer> {
         gaplessPlayback: true,
       );
     } else {
-      // ⏳ 準備中
       content = const SizedBox();
     }
 

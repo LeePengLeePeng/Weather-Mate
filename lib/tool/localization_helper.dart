@@ -1,6 +1,3 @@
-// 📁 將此檔案儲存為: lib/tool/localization_helper.dart
-
-// 新增一個語言判斷工具類
 class LocalizationHelper {
   // 判斷城市名稱是否為英文
   static bool isEnglishCity(String cityName) {
@@ -180,7 +177,7 @@ class LocalizationHelper {
     }
   }
 
-  // 🔥 新增：翻譯穿搭建議文字（從 outfit_recommendation_service 來的）
+  // 翻譯穿搭建議文字
   static String translateOutfitSuggestion(String suggestion, bool isEnglish) {
     if (isEnglish) {
       // 中文 → 英文翻譯對照表
@@ -225,8 +222,6 @@ class LocalizationHelper {
       return result;
       
     } else {
-      // 英文 → 中文（如果需要的話）
-      // 目前 outfit service 只產生中文，所以這邊直接返回
       return suggestion;
     }
   }

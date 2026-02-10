@@ -72,7 +72,7 @@ class OutfitRecommendationService {
     int? feelsLike,
     double? latitude,
     double? longitude,
-    bool isEnglish = false, // 🔥 新增語言參數
+    bool isEnglish = false,
   }) {
     // 使用體感溫度（更準確）
     final int actualFeelsLike = feelsLike ?? temperature;

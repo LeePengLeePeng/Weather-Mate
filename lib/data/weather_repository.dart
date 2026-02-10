@@ -9,6 +9,7 @@ import 'weather_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:math';
 
+
 class WeatherRepository {
   String get openWeatherApiKey => dotenv.env['OPEN_WEATHER_API_KEY'] ?? '';
   String get cwaApiKey => dotenv.env['CWA_API_KEY'] ?? '';
@@ -58,7 +59,7 @@ class WeatherRepository {
       
       String normalizedCity = cityName.replaceAll('台', '臺');
       if (!cityMapping.containsKey(normalizedCity)) {
-        print("⚠️ $cityName 不在 F-C0032-001 支援範圍");
+        print("$cityName 不在 F-C0032-001 支援範圍");
         return null;
       }
       
@@ -73,13 +74,13 @@ class WeatherRepository {
       
       final response = await http.get(uri);
       if (response.statusCode != 200) {
-        print("❌ F-C0032-001 API Error: ${response.statusCode}");
+        print("F-C0032-001 API Error: ${response.statusCode}");
         return null;
       }
       
       final data = jsonDecode(utf8.decode(response.bodyBytes));
       if (data['success'] != 'true') {
-        print("❌ F-C0032-001 API 回傳錯誤");
+        print("F-C0032-001 API 回傳錯誤");
         return null;
       }
       
@@ -150,13 +151,24 @@ class WeatherRepository {
       return null;
       
     } catch (e) {
-      print("❌ 取得 F-C0032-001 MinT/MaxT 失敗: $e");
+      print("取得 F-C0032-001 MinT/MaxT 失敗: $e");
       return null;
     }
   }
 
+  Future<int> _fetchTimezoneOffset(double lat, double lon) async {
+    final url =
+        'https://api.openweathermap.org/data/2.5/forecast?lat=$lat&lon=$lon&appid=$openWeatherApiKey';
+
+    final res = await http.get(Uri.parse(url));
+    final data = json.decode(res.body);
+
+    return data['city']['timezone'] ?? 0; // 秒
+  }
+
+
   // ===============================================================
-  // 🚀 給 Groq AI 專用的函式
+  // 給 Groq AI 專用的函式
   // ===============================================================
   Future<String> getWeatherForecastForGroq(String locationName) async {
     try {
@@ -202,7 +214,7 @@ class WeatherRepository {
       for (var d in w.dailyForecasts) {
         String dateStr = DateFormat('MM/dd (E)', 'zh_TW').format(d.date);
         sb.writeln(
-            "📅 $dateStr : 低溫 ${d.minTemp.toStringAsFixed(1)}°C / 高溫 ${d.maxTemp.toStringAsFixed(1)}°C, 降雨機率 ${d.rainChance}%");
+            "$dateStr : 低溫 ${d.minTemp.toStringAsFixed(1)}°C / 高溫 ${d.maxTemp.toStringAsFixed(1)}°C, 降雨機率 ${d.rainChance}%");
       }
     } else {
       sb.writeln("\n(無長期預報資料)");
@@ -219,7 +231,7 @@ class WeatherRepository {
   // ===============================================================
   Future<WeatherModel> getWeather(double lat, double lon, {String? displayCityName,}) async {
     if (openWeatherApiKey.isEmpty || cwaApiKey.isEmpty) {
-      throw Exception("❌ API Key 遺失！請檢查 .env 檔案是否設定正確。");
+      throw Exception("API Key 遺失！請檢查 .env 檔案是否設定正確。");
     }
 
     WeatherModel openWeatherData = await _fetchFromOpenWeather(lat, lon, displayCityName);
@@ -228,7 +240,7 @@ class WeatherRepository {
       try {
         return await _fetchTaiwanTownshipWeather(lat, lon, openWeatherData, displayCityName); // 🔥 傳遞 displayCityName
       } catch (e) {
-        print("⚠️ 鄉鎮資料取得失敗, 降級使用 OpenWeather: $e");
+        print("鄉鎮資料取得失敗, 降級使用 OpenWeather: $e");
         return openWeatherData;
       }
     } else {
@@ -264,21 +276,29 @@ class WeatherRepository {
   // ===============================================================
   // 2. 處理 OpenWeather
   // ===============================================================
-  Future<WeatherModel> _fetchFromOpenWeather(double lat, double lon,String? displayCityName,) async {
-    WeatherFactory wf =
-        WeatherFactory(openWeatherApiKey, language: Language.CHINESE_TRADITIONAL);
+  Future<WeatherModel> _fetchFromOpenWeather(double lat, double lon, String? displayCityName) async {
+    WeatherFactory wf = WeatherFactory(openWeatherApiKey, language: Language.CHINESE_TRADITIONAL);
 
     Weather current = await wf.currentWeatherByLocation(lat, lon);
     List<Weather> forecast = await wf.fiveDayForecastByLocation(lat, lon);
+    final int timezoneOffset = await _fetchTimezoneOffset(lat, lon);
+
+    // ---------------------------------------------------------
+    // 計算精確的城市當地時間（基準日期）
+    // ---------------------------------------------------------
+    final DateTime nowUtc = DateTime.now().toUtc();
+    final cityNow = nowUtc.add(Duration(seconds: timezoneOffset));
+    // 這是該城市的當地日期字串 (yyyy-MM-dd)
+    String todayKey = DateFormat('yyyy-MM-dd').format(cityNow);
+
+    double currentTemp = current.temperature?.celsius ?? 0;
+    int currentPop = _calculateRainChanceFromOWMCode(current.weatherConditionCode ?? 800);
+    String currentDesc = current.weatherDescription ?? "";
 
     // 1. 逐時資料 (24hr)
     List<double> hourlyTemps = [];
     List<int> hourlyRainChances = [];
     List<int> hourlyCodes = [];
-
-    double currentTemp = current.temperature?.celsius ?? 0;
-    int currentPop = _calculateRainChanceFromOWMCode(current.weatherConditionCode ?? 800);
-    String currentDesc = current.weatherDescription ?? "";
     
     hourlyTemps.add(currentTemp);
     hourlyRainChances.add(currentPop);
@@ -288,7 +308,6 @@ class WeatherRepository {
       double temp = w.temperature?.celsius ?? 0;
       int pop = _calculateRainChanceFromOWMCode(w.weatherConditionCode ?? 800);
       String desc = w.weatherDescription ?? "";
-
       for (int i = 0; i < 3; i++) {
         if (hourlyTemps.length < 24) {
           hourlyTemps.add(temp);
@@ -298,109 +317,106 @@ class WeatherRepository {
       }
     }
 
-    // 2. 每日預報分組
+    // ---------------------------------------------------------
+    // 使用 cityDate 進行分組
+    // ---------------------------------------------------------
     Map<String, List<Weather>> groupedByDay = {};
-    DateTime now = DateTime.now();
-    String todayKey = DateFormat('yyyy-MM-dd').format(now);
-    groupedByDay[todayKey] = [current]; // 先放入當前天氣
+    groupedByDay[todayKey] = [current]; 
 
     for (var w in forecast) {
       if (w.date != null) {
-        String dateKey = DateFormat('yyyy-MM-dd').format(w.date!);
+        // 轉換每一筆預報的 UTC 時間到該城市當地時間
+        final cityDate = w.date!.toUtc().add(Duration(seconds: timezoneOffset));
+        String dateKey = DateFormat('yyyy-MM-dd').format(cityDate);
         groupedByDay.putIfAbsent(dateKey, () => []).add(w);
       }
     }
 
-    // =======================================================
-    // 🔥 修正邏輯開始：計算今日 API 預測的最高/最低溫
-    // =======================================================
-    double apiTodayMax = current.temperature?.celsius ?? 0;
-    double apiTodayMin = current.temperature?.celsius ?? 0;
-
-    // 從 forecast 列表中找出所有「屬於今天」的時段，更新 Max/Min
-    if (groupedByDay.containsKey(todayKey)) {
-      var todayList = groupedByDay[todayKey]!;
-      for (var w in todayList) {
-        double t = w.temperature?.celsius ?? current.temperature?.celsius ?? 0;
-        double max = w.tempMax?.celsius ?? t;
-        double min = w.tempMin?.celsius ?? t;
-        
-        if (max > apiTodayMax) apiTodayMax = max;
-        if (min < apiTodayMin) apiTodayMin = min;
-      }
-    }
-    // =======================================================
-    // 🔥 修正邏輯結束
-    // =======================================================
-
-    List<DailyWeather> dailyForecasts = [];
-    List<String> sortedKeys = groupedByDay.keys.toList()..sort();
-
-    // 🔥 使用 DailyTempManager
+    // ---------------------------------------------------------
+    // DailyTempManager 必須傳入 cityNow 避免跨日判定錯誤
+    // ---------------------------------------------------------
     final prefs = await SharedPreferences.getInstance();
     final cityName = current.areaName ?? "unknown";
     final tempManager = DailyTempManager(prefs, 'owm', cityKey: cityName);
         
-    // 3. 獲取緩存的溫度（這裡可能會拿到當前溫度作為預設值）
-    final todayMinMax = await tempManager.getTodayMinMax(currentTemp);
+    final todayMinMax = await tempManager.getTodayMinMax(currentTemp, cityNow);
     
-    // 4. 🔥 結合「緩存(過去)」與「API(未來)」來決定最終今日溫度
-    //    如果 API 看到的未來溫度比緩存的高，就更新上去
     double finalMaxT = todayMinMax['max']!;
     double finalMinT = todayMinMax['min']!;
 
-    if (apiTodayMax > finalMaxT) finalMaxT = apiTodayMax;
-    if (apiTodayMin < finalMinT) finalMinT = apiTodayMin;
-
-    // 將修正後的數值存回 Manager，以免下次刷新又變回舊的
-    if (finalMaxT != todayMinMax['max'] || finalMinT != todayMinMax['min']) {
-      await tempManager.updateTodayRaw(finalMaxT, finalMinT);
+    // 掃描 API 預報中的「今天」最高/最低溫
+    if (groupedByDay.containsKey(todayKey)) {
+      for (var w in groupedByDay[todayKey]!) {
+        double t = w.temperature?.celsius ?? currentTemp;
+        double max = w.tempMax?.celsius ?? t;
+        double min = w.tempMin?.celsius ?? t;
+        if (max > finalMaxT) finalMaxT = max;
+        if (min < finalMinT) finalMinT = min;
+      }
     }
 
-    // 生成 dailyForecasts
-    for (int i = 0; i < 6; i++) {
-      String dateKey;
-      List<Weather> dayData;
+    await tempManager.updateTodayRaw(finalMaxT, finalMinT);
 
-      if (i < sortedKeys.length) {
-        dateKey = sortedKeys[i];
-        dayData = groupedByDay[dateKey]!;
-      } else {
-        DateTime lastDate = DateTime.parse(sortedKeys.last).add(Duration(days: i - sortedKeys.length + 1));
-        dateKey = DateFormat('yyyy-MM-dd').format(lastDate);
-        dayData = groupedByDay[sortedKeys.last]!;
-      }
+    // ---------------------------------------------------------
+    // 生成 DailyForecasts
+    // ---------------------------------------------------------
+    List<DailyWeather> dailyForecasts = [];
 
-      double maxT, minT;
-      
-      if (i == 0) {
-        // ✅ 今天：使用我們剛才修正過的最終值
-        maxT = finalMaxT;
-        minT = finalMinT;
-      } else {
-        // 未來幾天：從 API 計算
-        maxT = dayData
-            .map((e) => e.tempMax?.celsius ?? e.temperature?.celsius ?? 0)
-            .reduce((a, b) => a > b ? a : b);
-        minT = dayData
-            .map((e) => e.tempMin?.celsius ?? e.temperature?.celsius ?? 0)
-            .reduce((a, b) => a < b ? a : b);
-        
-        // 如果是明天，保存預測
-        if (i == 1) {
-          await tempManager.saveTomorrowForecast(maxT, minT);
-        }
-      }
+    // 永遠先放入正確的「今天」
+    dailyForecasts.add(DailyWeather(
+      date: cityNow,
+      maxTemp: finalMaxT,
+      minTemp: finalMinT,
+      rainChance: currentPop,
+      conditionCode: current.weatherConditionCode ?? 800,
+    ));
+
+    List<String> sortedKeys = groupedByDay.keys.toList()..sort();
+
+    for (String dateKey in sortedKeys) {
+      if (dateKey == todayKey) continue; 
+      if (dailyForecasts.length >= 6) break;
+
+      var dayData = groupedByDay[dateKey]!;
+
+      double maxT = dayData
+          .map((e) => e.tempMax?.celsius ?? e.temperature?.celsius ?? 0)
+          .reduce((a, b) => a > b ? a : b);
+      double minT = dayData
+          .map((e) => e.tempMin?.celsius ?? e.temperature?.celsius ?? 0)
+          .reduce((a, b) => a < b ? a : b);
 
       Weather representative = dayData[dayData.length ~/ 2];
       int pop = _calculateRainChanceFromOWMCode(representative.weatherConditionCode ?? 800);
 
+      final parts = dateKey.split('-');
+      final displayDate = DateTime(int.parse(parts[0]), int.parse(parts[1]), int.parse(parts[2]));
+
       dailyForecasts.add(DailyWeather(
-        date: DateTime.parse(dateKey),
+        date: displayDate,
         maxTemp: maxT,
         minTemp: minT,
         rainChance: pop,
         conditionCode: representative.weatherConditionCode ?? 800,
+      ));
+
+      final tomorrowLocal = cityNow.add(const Duration(days: 1));
+      final tomorrowKey = DateFormat('yyyy-MM-dd').format(tomorrowLocal);
+      if (dateKey == tomorrowKey) {
+        await tempManager.saveTomorrowForecast(maxT, minT, cityNow);
+      }
+    }
+
+    while (dailyForecasts.length < 6) {
+      final lastForecast = dailyForecasts.last;
+      final nextDate = lastForecast.date.add(const Duration(days: 1));
+      
+      dailyForecasts.add(DailyWeather(
+        date: nextDate,
+        maxTemp: lastForecast.maxTemp,
+        minTemp: lastForecast.minTemp,
+        rainChance: lastForecast.rainChance,
+        conditionCode: lastForecast.conditionCode,
       ));
     }
     
@@ -408,8 +424,8 @@ class WeatherRepository {
       latitude: lat,
       longitude: lon,
       temperature: current.temperature?.celsius ?? 0,
-      tempMax: finalMaxT, // 使用修正後的值
-      tempMin: finalMinT, // 使用修正後的值
+      tempMax: finalMaxT,
+      tempMin: finalMinT,
       description: current.weatherDescription ?? "",
       conditionCode: decideConditionCode(current.weatherDescription ?? "", currentPop),
       hourlyConditionCodes: hourlyCodes,
@@ -422,6 +438,7 @@ class WeatherRepository {
       sunset: current.sunset ?? DateTime.now(),
       humidity: current.humidity ?? 0,
       windSpeed: current.windSpeed ?? 0,
+      timezoneOffset: timezoneOffset,
       hourlyTemps: hourlyTemps,
       rainChance: currentPop,
       dewPoint: _calculateDewPoint(current.temperature?.celsius ?? 0, current.humidity ?? 50),
@@ -433,7 +450,7 @@ class WeatherRepository {
   }
 
   // ===============================================================
-  // 🆕 新增: 取得最近觀測站的「實測溫度」 (O-A0001-001)
+  // 取得最近觀測站的「實測溫度」 (O-A0001-001)
   // ===============================================================
   Future<double?> _fetchNearestObservation(double lat, double lon) async {
     try {
@@ -444,7 +461,6 @@ class WeatherRepository {
         {
           'Authorization': cwaApiKey,
           'format': 'JSON',
-          // 可以過濾狀態為「開站」的，減少資料量 (選用)
           'status': 'A', 
         },
       );
@@ -462,12 +478,11 @@ class WeatherRepository {
       double minDistance = double.infinity;
 
       for (var station in stations) {
-        // 1. 取得座標
+        // 取得座標
         var geo = _safeGet(station, 'GeoInfo');
         var coord = _safeGet(geo, 'Coordinates');
-        if (coord == null) continue; // 略過無座標站點
+        if (coord == null) continue;
 
-        // 注意: CWA API 有時經緯度欄位名稱不同，需做防呆
         double? sLat = double.tryParse(_safeGet(coord, 'CoordinateLatitude')?.toString() ?? 
                                      _safeGet(coord, 'Latitude')?.toString() ?? '');
         double? sLon = double.tryParse(_safeGet(coord, 'CoordinateLongitude')?.toString() ?? 
@@ -475,11 +490,9 @@ class WeatherRepository {
 
         if (sLat == null || sLon == null) continue;
 
-        // 2. 計算距離 (Haversine Formula 簡化版或直線距離，這裡用簡單的直線距離比較快)
-        // 為了效能，初步篩選可以用歐氏距離，因為台灣範圍小
         double dist = pow(sLat - lat, 2) + pow(sLon - lon, 2).toDouble();
 
-        // 3. 更新最近站點
+        // 更新最近站點
         if (dist < minDistance) {
           // 抓取溫度
           var weatherElem = _safeGet(station, 'WeatherElement');
@@ -494,29 +507,28 @@ class WeatherRepository {
         }
       }
 
-      // 如果最近距離太大 (例如 > 0.2 度 約 20km)，可能代表抓錯或在海上，可自行決定是否捨棄
-      // 這裡直接回傳最近的
+      // 直接回傳最近的
       if (nearestTemp != null) {
-        print("🌡️ 成功取得測站實測溫度: $nearestTemp°C");
+        print("成功取得測站實測溫度: $nearestTemp°C");
       }
       return nearestTemp;
 
     } catch (e) {
-      print("❌ 取得測站觀測資料失敗: $e");
+      print("取得測站觀測資料失敗: $e");
       return null;
     }
   }
 
   // ===============================================================
-  // 3. 處理 CWA 台灣資料
+  // 處理 CWA 台灣資料
   // ===============================================================
   Future<WeatherModel> _fetchTaiwanTownshipWeather(
     double lat, double lon, WeatherModel baseData, String? displayCityName) async { // 🔥 新增參數
-    // 1. 取得地點資訊
+    // 取得地點資訊
     List<Placemark> placemarks = await placemarkFromCoordinates(lat, lon);
     Placemark place = placemarks.first;
 
-    // 🔥 使用 TaiwanLocationMapping 進行英文轉中文
+    // 使用 TaiwanLocationMapping 進行英文轉中文
     String rawCity = place.administrativeArea ?? "臺北市";
     String rawDistrict = place.locality ?? place.subLocality ?? place.subAdministrativeArea ?? "";
     
@@ -526,17 +538,17 @@ class WeatherRepository {
     
     if (district == city) district = place.subLocality ?? "";
 
-    print("📍 CWA 請求地點: $city $district (原始: $rawCity $rawDistrict)");
+    print("CWA 請求地點: $city $district (原始: $rawCity $rawDistrict)");
 
     double? realTimeTemp = await _fetchNearestObservation(lat, lon);
 
     String? dataId = _getCountyDataId(city);
     if (dataId == null) {
-      print("⚠️ 無法取得 $city 的 dataId，降級使用 OpenWeather");
+      print("無法取得 $city 的 dataId，降級使用 OpenWeather");
       return baseData;
     }
 
-    // 2. 發送 API 請求
+    // 發送 API 請求
     final uri = Uri.https(
       'opendata.cwa.gov.tw',
       '/api/v1/rest/datastore/$dataId',
@@ -558,7 +570,7 @@ class WeatherRepository {
     var locationsNode = _safeGetList(_safeGet(data, 'records'), 'Locations')[0];
     List locationListRaw = _safeGetList(locationsNode, 'Location');
 
-    // 3. 尋找對應行政區
+    // 尋找對應行政區
     var targetLocation;
     try {
       targetLocation = locationListRaw.firstWhere((loc) {
@@ -590,17 +602,15 @@ class WeatherRepository {
 
         final now = DateTime.now();
 
-        // 🔥 關鍵修正: 遍歷 Time List 找出 "現在" 所在的區間
         for (var item in timeList) {
           var startStr = _safeGet(item, 'StartTime') ?? _safeGet(item, 'DataTime');
-          var endStr = _safeGet(item, 'EndTime'); // 有些元素只有 DataTime 無 EndTime
+          var endStr = _safeGet(item, 'EndTime');
 
           if (startStr == null) continue;
           
           DateTime? start = DateTime.tryParse(startStr.toString());
           DateTime? end = (endStr != null) ? DateTime.tryParse(endStr.toString()) : null;
 
-          // 情況 1: 有區間 (StartTime ~ EndTime) -> 判斷現在是否在區間內
           if (start != null && end != null) {
             if (!now.isBefore(start) && now.isBefore(end)) {
               var valList = _safeGetList(item, 'ElementValue');
@@ -608,12 +618,8 @@ class WeatherRepository {
               return (valList.isNotEmpty) ? _readCwaValue(valList[0]) : null;
             }
           }
-          // 情況 2: 只有單點時間 (DataTime) -> 找最近的一筆 (或是未來的第一筆)
-          // (F-D0047 溫度通常是有區間的，這裡保留彈性)
         }
 
-        // ⚠️ 如果找不到現在的區間 (可能 API 尚未更新)，才勉強用第一筆 (但很有可能過時)
-        // 或者是直接回傳 null 讓後面決定
         var firstItem = timeList[0];
         var valList = _safeGetList(firstItem, 'ElementValue');
         if (valList.isEmpty) valList = _safeGetList(firstItem, 'elementValue');
@@ -624,7 +630,7 @@ class WeatherRepository {
       }
     }
 
-    // 4. 基礎數值
+    // 基礎數值
     double forecastTemp = double.tryParse(getCurrentForecastValue(['T', '溫度']) ?? '',) ?? baseData.temperature;
     double stationTemp = realTimeTemp ?? forecastTemp;
     double humidity = double.tryParse(getCurrentForecastValue(['RH', '相對濕度']) ?? '') ?? baseData.humidity;
@@ -653,12 +659,12 @@ class WeatherRepository {
         }
       }
     } catch (e) {
-      print("⚠️ 取得當前天氣描述失敗: $e");
+      print("取得當前天氣描述失敗: $e");
     }
 
     final displayTemp = forecastTemp;
 
-    print("📊 基礎數值解析: 溫=$displayTemp, 濕=$humidity, 風=$windSpeed, 況=$wx");
+    print("基礎數值解析: 溫=$displayTemp, 濕=$humidity, 風=$windSpeed, 況=$wx");
     
 
     // ===========================================================
@@ -689,7 +695,6 @@ class WeatherRepository {
           orElse: () => tempPoints.last,
         );
 
-        // ✅ 關鍵：不要再 final
         forecastNowTemp = forecastNowPoint.value;
         cwaHourlyTemps.add(forecastNowTemp);
 
@@ -722,7 +727,6 @@ class WeatherRepository {
           var timeList = _safeGetList(pop3hNode, 'Time');
           final now = DateTime.now();
           
-          // ✅ 先找出「當前時段」的降雨機率
           for (var item in timeList) {
             final startStr = _safeGet(item, 'StartTime')?.toString() ?? '';
             final endStr = _safeGet(item, 'EndTime')?.toString() ?? '';
@@ -731,7 +735,6 @@ class WeatherRepository {
             final end = DateTime.tryParse(endStr);
             
             if (start != null && end != null) {
-              // 如果「現在」落在這個時段內
               if (!now.isBefore(start) && now.isBefore(end)) {
                 var valList = _safeGetList(item, 'ElementValue');
                 if (valList.isEmpty) valList = _safeGetList(item, 'elementValue');
@@ -745,7 +748,6 @@ class WeatherRepository {
             }
           }
           
-          // ✅ 展開成 24 小時（第一筆會是當前時段的機率）
           cwaHourlyRainChance = expandPoP3hToHourly(timeList);
           
           if (cwaHourlyRainChance.length > 24) {
@@ -753,10 +755,9 @@ class WeatherRepository {
           }
         }
       } catch (e) {
-        print("❌ PoP3h 解析失敗: $e");
+        print("PoP3h 解析失敗: $e");
       }
 
-      // 預設值處理
       if (cwaHourlyRainChance.isEmpty) {
         cwaHourlyRainChance = List.filled(24, 0);
       }
@@ -765,26 +766,30 @@ class WeatherRepository {
         currentRainChance = cwaHourlyRainChance.first;
       }
 
-      // 最後的安全檢查：如果天氣明確說有雨但機率還是 0
       if (wx.contains('雨') && currentRainChance == 0) {
         currentRainChance = _estimateRainFromWx(wx);
-        // ✅ 同時更新第一筆
         if (cwaHourlyRainChance.isNotEmpty) {
           cwaHourlyRainChance[0] = currentRainChance;
         }
-        print("⚠️ 最終安全檢查：天氣「$wx」但降雨=0，調整為 $currentRainChance%");
+        print("最終安全檢查：天氣「$wx」但降雨=0，調整為 $currentRainChance%");
       }
 
     int openWeatherMapCode = decideConditionCode(wx, currentRainChance);
 
     // ===========================================================
-    // 🔥 使用 DailyTempManager
+    // 定義台灣當前的當地時間 (UTC+8)
+    // ===========================================================
+    final DateTime nowUtc = DateTime.now().toUtc();
+    final DateTime taiwanNow = nowUtc.add(const Duration(hours: 8)); 
+
+    // ===========================================================
+    // 使用 DailyTempManager
     // ===========================================================
     final prefs = await SharedPreferences.getInstance();
     final cityKey = "$city-$district";
     final tempManager = DailyTempManager(prefs, 'cwa', cityKey: cityKey);
 
-    final todayMinMax = await tempManager.getTodayMinMax(stationTemp);
+    final todayMinMax = await tempManager.getTodayMinMax(stationTemp, taiwanNow);
     double todayMaxTemp = todayMinMax['max']!;
     double todayMinTemp = todayMinMax['min']!;
 
@@ -794,13 +799,11 @@ class WeatherRepository {
       if (cityMinMaxT != null) {
         todayMaxTemp = cityMinMaxT['max']!;
         todayMinTemp = cityMinMaxT['min']!;
-        // 這裡僅作變數更新，等等下方會統一做 updateTodayRaw
-        print("✅ [CWA] 使用 F-C0032-001 基礎範圍: ${todayMinTemp.toStringAsFixed(1)}~${todayMaxTemp.toStringAsFixed(1)}°C");
+        print("[CWA] 使用 F-C0032-001 基礎範圍: ${todayMinTemp.toStringAsFixed(1)}~${todayMaxTemp.toStringAsFixed(1)}°C");
       }
     }
 
     // ===========================================================
-    // 🔥 修正邏輯：掃描 CWA 逐時預報 (tempPoints)
     // 如果今天稍晚的鄉鎮預報有更高溫/更低溫，就擴展範圍
     // ===========================================================
     final now = DateTime.now();
@@ -816,7 +819,6 @@ class WeatherRepository {
       }
     }
 
-    // 將修正後的數值存回，確保一致性
     await tempManager.updateTodayRaw(todayMaxTemp, todayMinTemp);
 
     // ===========================================================
@@ -843,7 +845,6 @@ class WeatherRepository {
 
     final dayWx = <String, String>{};
     try {
-      // ... (這段 Wx 解析邏輯保持原本的即可)
       final wxNode = weatherElements.firstWhere(
         (e) => ['Wx', '天氣現象'].contains(_safeGet(e, 'ElementName')),
         orElse: () => null,
@@ -940,7 +941,6 @@ class WeatherRepository {
       final k = DateFormat('yyyy-MM-dd').format(date);
 
       if (offset == 0) {
-        // ✅ 今日：使用剛剛修正後的 todayMaxTemp/todayMinTemp
         dailyForecasts.add(DailyWeather(
           date: date,
           maxTemp: todayMaxTemp,
@@ -949,16 +949,14 @@ class WeatherRepository {
           conditionCode: openWeatherMapCode,
         ));
         
-        print("📅 $k (今日修正後): ${todayMinTemp.toStringAsFixed(1)}~${todayMaxTemp.toStringAsFixed(1)}°C");
+        print("$k (今日修正後): ${todayMinTemp.toStringAsFixed(1)}~${todayMaxTemp.toStringAsFixed(1)}°C");
         
       } else if (dayTemps.containsKey(k) && dayTemps[k]!.isNotEmpty) {
         final temps = dayTemps[k]!;
         double maxT = temps.reduce((a, b) => a > b ? a : b);
         double minT = temps.reduce((a, b) => a < b ? a : b);
         final wxText = dayWx[k] ?? '多雲';
-        // 使用預設值，避免 null
         int pop = dayPop[k] ?? 0;
-        // 如果機率是 0 但文字描述有雨，就用你寫的函式去推算
         if (pop == 0 && wxText.contains('雨')) {
           pop = _estimateRainFromWx(wxText);
         }
@@ -972,13 +970,13 @@ class WeatherRepository {
         ));
 
         if (k == tomorrowKey) {
-          await tempManager.saveTomorrowForecast(maxT, minT);
+          await tempManager.saveTomorrowForecast(maxT, minT, now);
         }
       } else if (owmDailyMap.containsKey(k)) {
         dailyForecasts.add(owmDailyMap[k]!);
         final d = owmDailyMap[k]!;
         if (k == tomorrowKey) {
-          await tempManager.saveTomorrowForecast(d.maxTemp, d.minTemp);
+          await tempManager.saveTomorrowForecast(d.maxTemp, d.minTemp, now);
         }
       } else {
         dailyForecasts.add(DailyWeather(
@@ -1021,10 +1019,7 @@ class WeatherRepository {
           int pop = (i < cwaHourlyRainChance.length) ? cwaHourlyRainChance[i] : 0;
 
           if (hourlyWxText.contains('雨') && pop == 0) {
-            // 不要寫死 15，改用推算的
             pop = _estimateRainFromWx(hourlyWxText); 
-            
-            // 這一行記得保留，這樣才能更新陣列
             if (i < cwaHourlyRainChance.length) cwaHourlyRainChance[i] = pop;
           }
 
@@ -1033,35 +1028,34 @@ class WeatherRepository {
         }
       }
     } catch (e) {
-      print("❌ 解析逐時圖示失敗: $e");
+      print("解析逐時圖示失敗: $e");
       hourlyConditionCodes = List.filled(24, openWeatherMapCode);
     }
     if (hourlyConditionCodes.isEmpty) {
       hourlyConditionCodes = List.filled(24, openWeatherMapCode);
     }
 
-    print("🎯 最終結果: code=$openWeatherMapCode, 降雨=$currentRainChance%");
+    print("最終結果: code=$openWeatherMapCode, 降雨=$currentRainChance%");
 
-    // 🔥 決定最終顯示的城市名稱
+    // 決定最終顯示的城市名稱
     String finalAreaName;
     if (displayCityName != null && displayCityName.trim().isNotEmpty) {
-      // 如果有傳入 displayCityName，直接使用（保持英文）
       finalAreaName = displayCityName;
-      print("✅ 使用傳入的城市名稱: $finalAreaName");
+      print("使用傳入的城市名稱: $finalAreaName");
     } else {
-      // 否則使用中文地名
       finalAreaName = "$city ${_safeGet(targetLocation, 'LocationName')}";
-      print("✅ 使用中文地名: $finalAreaName");
+      print("使用中文地名: $finalAreaName");
     }
 
     return WeatherModel(
       latitude: lat,
       longitude: lon, 
       temperature: forecastNowTemp,
+      timezoneOffset: 28800,
       tempMax: todayMaxTemp,
       tempMin: todayMinTemp,
       description: wx,
-      areaName: finalAreaName, // 🔥 使用決定好的名稱
+      areaName: finalAreaName,
       conditionCode: openWeatherMapCode,
       hourlyConditionCodes: hourlyConditionCodes,
       sunrise: baseData.sunrise,
@@ -1081,7 +1075,7 @@ class WeatherRepository {
   }
 
   // ===============================================================
-  // 4. Helpers & Mappings
+  // Helpers & Mappings
   // ===============================================================
 
   dynamic _safeGet(dynamic data, String key) {
@@ -1251,7 +1245,6 @@ class WeatherRepository {
     final now = DateTime.now();
     final currentHour = DateTime(now.year, now.month, now.day, now.hour);
     
-    // 建立一個 Map: 時間 -> 降雨機率
     Map<DateTime, int> popMap = {};
     
     for (var item in timeList) {
@@ -1313,39 +1306,33 @@ class WeatherRepository {
 class DailyTempManager {
   final SharedPreferences prefs;
   final String prefix; // 'cwa' 或 'owm'
-  final String cityKey; // ✅ 修正: 增加 cityKey 來區分不同地點
+  final String cityKey; 
   
-  // ✅ 修正: 建構子接收 cityKey
   DailyTempManager(this.prefs, this.prefix, {required this.cityKey});
 
-  // 輔助屬性：產生唯一的 Key (例如 "cwa_Taipei_Forecast_date")
   String get uniquePrefix => '${prefix}_${cityKey.replaceAll(" ", "_")}';
   
-  Future<Map<String, double>> getTodayMinMax(double currentTemp) async {
-    final now = DateTime.now();
-    final todayKey = DateFormat('yyyy-MM-dd').format(now);
-    
-    // 讀取該城市的日期
+  Future<Map<String, double>> getTodayMinMax(double currentTemp, DateTime cityLocalDate) async {
+    final todayKey = DateFormat('yyyy-MM-dd').format(cityLocalDate);
     final storedDate = prefs.getString('${uniquePrefix}_forecast_date');
-    
+
     double maxTemp;
     double minTemp;
     
     if (storedDate != todayKey) {
-      print("🌅 [$prefix-$cityKey] 新的一天！日期從 $storedDate 切換到 $todayKey");
+      print("[$prefix-$cityKey] 偵測到日期切換！當地日期從 $storedDate 變為 $todayKey");
       
-      // 讀取該城市的預測值
+      // 讀取該城市先前預存的今日預測值
       double? forecastMax = prefs.getDouble('${uniquePrefix}_today_forecast_max');
       double? forecastMin = prefs.getDouble('${uniquePrefix}_today_forecast_min');
       
       if (forecastMax != null && forecastMin != null) {
         maxTemp = forecastMax;
         minTemp = forecastMin;
-        print("📊 [$prefix-$cityKey] 使用預存的今日預測: ${minTemp.toStringAsFixed(1)}~${maxTemp.toStringAsFixed(1)}°C");
+        print("[$prefix-$cityKey] 已套用當地今日預估範圍: ${minTemp.toStringAsFixed(1)}~${maxTemp.toStringAsFixed(1)}°C");
       } else {
         maxTemp = currentTemp;
         minTemp = currentTemp;
-        print("⚠️ [$prefix-$cityKey] 沒有預存預測，使用當前溫度: ${currentTemp.toStringAsFixed(1)}°C");
       }
       
       await prefs.setString('${uniquePrefix}_forecast_date', todayKey);
@@ -1354,29 +1341,31 @@ class DailyTempManager {
       minTemp = prefs.getDouble('${uniquePrefix}_daily_min') ?? currentTemp;
     }
     
+    // 更新實測最高/最低溫
     if (currentTemp > maxTemp) maxTemp = currentTemp;
     if (currentTemp < minTemp) minTemp = currentTemp;
     
     await prefs.setDouble('${uniquePrefix}_daily_max', maxTemp);
     await prefs.setDouble('${uniquePrefix}_daily_min', minTemp);
     
-    print("📊 [$prefix-$cityKey] 今日溫度範圍（累積）: ${minTemp.toStringAsFixed(1)}~${maxTemp.toStringAsFixed(1)}°C");
-    
     return {'max': maxTemp, 'min': minTemp};
   }
   
-  Future<void> saveTomorrowForecast(double maxTemp, double minTemp) async {
+  // 儲存明天預測時，基準點也必須是傳入的 cityLocalDate
+  Future<void> saveTomorrowForecast(double maxTemp, double minTemp, DateTime cityLocalDate) async {
     await prefs.setDouble('${uniquePrefix}_today_forecast_max', maxTemp);
     await prefs.setDouble('${uniquePrefix}_today_forecast_min', minTemp);
     
-    final tomorrow = DateTime.now().add(const Duration(days: 1));
+    // 計算該城市的明天日期作為 Key
+    final tomorrow = cityLocalDate.add(const Duration(days: 1));
     final tomorrowKey = DateFormat('yyyy-MM-dd').format(tomorrow);
-    print("💾 [$prefix-$cityKey] 已保存明天 ($tomorrowKey) 的預測: ${minTemp.toStringAsFixed(1)}~${maxTemp.toStringAsFixed(1)}°C");
+    
+    print("[$prefix-$cityKey] 已保存該城市明天 ($tomorrowKey) 的預測: ${minTemp.toStringAsFixed(1)}~${maxTemp.toStringAsFixed(1)}°C");
   }
 
+  // 更新今日 Raw 資料
   Future<void> updateTodayRaw(double newMax, double newMin) async {
     await prefs.setDouble('${uniquePrefix}_daily_max', newMax);
     await prefs.setDouble('${uniquePrefix}_daily_min', newMin);
-    print("🔄 [$prefix-$cityKey] 根據 API 預報修正今日範圍: ${newMin.toStringAsFixed(1)}~${newMax.toStringAsFixed(1)}°C");
   }
 }

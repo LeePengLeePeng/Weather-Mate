@@ -6,7 +6,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 
-// 🔥 確保引用你的 Bloc 和 Model
 import 'package:weather_test/bloc/weather_bloc_bloc.dart';
 import 'package:weather_test/data/weather_repository.dart';
 import 'package:weather_test/tool/weather_prompt_helper.dart';
@@ -71,7 +70,6 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     
-    // 🔥 1. 修正：使用 WeatherBlocSuccess 和 .weather
     final weatherState = context.read<WeatherBlocBloc>().state;
     String intro;
 
@@ -189,12 +187,11 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     _startTypewriterEffect("..."); 
 
     try {
-      // 🔥 2. 修正：每次對話前，重新抓取最新的天氣狀態
+      // 每次對話前，重新抓取最新的天氣狀態
       final weatherState = context.read<WeatherBlocBloc>().state;
       
       String systemContent;
       
-      // 這裡改成 WeatherBlocSuccess 和 .weather
       if (weatherState is WeatherBlocSuccess) {
         // 將天氣資料傳給 Prompt Helper
         systemContent = WeatherPromptHelper.generateSystemPrompt(weatherState.weather);

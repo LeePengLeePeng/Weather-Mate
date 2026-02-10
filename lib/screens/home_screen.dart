@@ -22,17 +22,14 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       
-      // 🔥 重大改變：這裡不要用 BlocBuilder 包住全家！
-      // 改成用 Stack，讓背景和前景分開處理
       body: Stack(
         children: [
           // ==========================================
-          // Layer 0: 背景層 (自己有一個 BlocBuilder)
+          // Layer 0: 背景層
           // ==========================================
           Positioned.fill(
             child: BlocBuilder<WeatherBlocBloc, WeatherBlocState>(
               buildWhen: (previous, current) {
-                // 優化：只有當天氣代碼改變時才重繪背景，提升效能
                 if (previous is WeatherBlocSuccess && current is WeatherBlocSuccess) {
                   return previous.weather.conditionCode != current.weather.conditionCode;
                 }
@@ -52,20 +49,20 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
 
           // ==========================================
-          // Layer 1: 內容層 (PageView 獨立出來，不被 Bloc 影響)
+          // Layer 1: 內容層
           // ==========================================
           PageView(
             controller: _pageController,
-            physics: const ClampingScrollPhysics(), // 建議用 Clamping 比較不會有彈跳露餡的問題
-            allowImplicitScrolling: true, // 🔥 這行依然是核心，開啟預載
+            physics: const ClampingScrollPhysics(), 
+            allowImplicitScrolling: true, 
             children: [
               
-              // [Page 0] Chat (完全靜態，不受天氣 Bloc 影響)
+              // [Page 0] Chat
               const KeepAliveWrapper(
                 child: ChatScreen(),
               ),
 
-              // [Page 1] Weather (只有這一頁需要監聽 Bloc)
+              // [Page 1] Weather
               KeepAliveWrapper(
                 child: BlocBuilder<WeatherBlocBloc, WeatherBlocState>(
                   builder: (context, state) {
@@ -88,7 +85,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
 
-              // [Page 2] Search (完全靜態)
+              // [Page 2] Search
               KeepAliveWrapper(
                 child: SearchScreen(
                   onCitySelected: () => _pageController.animateToPage(1, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut),

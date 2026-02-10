@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:weather_test/IconPlayer/WeatherIconPlayer.dart';
 import 'package:weather_test/data/outfit_recommendation_service.dart';
+import 'package:weather_test/tool/city_time_service.dart';
 import 'package:weather_test/tool/localization_helper.dart';
 
 class WeatherView extends StatefulWidget {
@@ -31,13 +32,12 @@ class _WeatherViewState extends State<WeatherView> {
   @override
   void initState() {
     super.initState();
-    _currentTime = DateTime.now();
-    
-    // 🔥 每秒更新時間
+    _currentTime = CityTimeService.getCityLocalTime(widget.weather.timezoneOffset);
+
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (mounted) {
         setState(() {
-          _currentTime = DateTime.now();
+          _currentTime = CityTimeService.getCityLocalTime(widget.weather.timezoneOffset);
         });
       }
     });
@@ -49,10 +49,10 @@ class _WeatherViewState extends State<WeatherView> {
     super.dispose();
   }
 
-  // 🔥 判斷是否為英文顯示
+  // 判斷是否為英文顯示
   bool get _isEnglish => LocalizationHelper.isEnglishCity(widget.displayCityName ?? widget.weather.areaName);
 
-  // 🔥 取得完整星期名稱 (根據語言)
+  // 取得完整星期名稱
   String _getFullDayName(DateTime date) {
     if (_isEnglish) {
       return DateFormat('EEEE').format(date);
@@ -77,7 +77,7 @@ class _WeatherViewState extends State<WeatherView> {
 
   // --- 2. 大圖示邏輯 (整合 WeatherIconPlayer) ---
   Widget getWeatherIcon(int code) {
-    // ⚡ 雷雨
+    // 雷雨
     if (code >= 230 && code < 300) {
       return WeatherIconPlayer(
         introAsset: 'assets/thunder_loop.webp', 
@@ -85,7 +85,7 @@ class _WeatherViewState extends State<WeatherView> {
         replayKey: widget.weather.areaName,
       );
     }
-    // 🌧️ 雨天 (包含毛毛雨、大雨)
+    // 雨天 (包含毛毛雨、大雨)
     if ((code >= 200 && code < 230) || (code >= 300 && code < 400) || (code >= 500 && code < 600)) {
       return WeatherIconPlayer(
         introAsset: 'assets/rain_intro.webp', 
@@ -93,7 +93,7 @@ class _WeatherViewState extends State<WeatherView> {
         replayKey: widget.weather.areaName,
       );
     }
-    // ❄️ 下雪
+    // 下雪
     if (code >= 600 && code < 700) {
       return WeatherIconPlayer(
         introAsset: 'assets/snow_loop.webp', 
@@ -101,7 +101,7 @@ class _WeatherViewState extends State<WeatherView> {
         replayKey: widget.weather.areaName,
       );
     }
-    // 🌫️ 霧/大氣
+    // 霧/大氣
     if (code >= 700 && code < 800) {
       return WeatherIconPlayer(
         introAsset: 'assets/Atmosphere.webp', 
@@ -109,7 +109,7 @@ class _WeatherViewState extends State<WeatherView> {
         replayKey: widget.weather.areaName,
       );
     }
-    // ☀️ 晴天
+    // 晴天
     if (code == 800) {
       return WeatherIconPlayer(
         introAsset: 'assets/sun_intro.webp', 
@@ -117,7 +117,7 @@ class _WeatherViewState extends State<WeatherView> {
         replayKey: widget.weather.areaName,
       );
     }
-    // 🌤️ 晴時多雲
+    // 晴時多雲
     if (code == 801 || code == 802) {
       return WeatherIconPlayer(
         introAsset: 'assets/sun_cloud_intro.webp', 
@@ -125,7 +125,7 @@ class _WeatherViewState extends State<WeatherView> {
         replayKey: widget.weather.areaName,
       );
     }
-    // ☁️ 多雲/陰天
+    // 多雲/陰天
     if (code == 803 || code == 804) {
       return WeatherIconPlayer(
         introAsset: 'assets/cloud_loop.webp', 
@@ -268,14 +268,14 @@ class _WeatherViewState extends State<WeatherView> {
           pinned: true,
           delegate: _WeatherHeaderDelegate(
             weather: widget.weather,
-            displayCityName: widget.displayCityName, // 🔥 修正
+            displayCityName: widget.displayCityName, 
             expandedHeight: 530.0,
             topPadding: MediaQuery.of(context).padding.top,
             weatherIcon: weatherIcon,
-            leading: widget.leading, // 🔥 修正
-            trailing: widget.trailing, // 🔥 修正
+            leading: widget.leading, 
+            trailing: widget.trailing, 
             isEnglish: _isEnglish,
-            currentTime: _currentTime, // 🔥 新增：傳入當前時間
+            currentTime: _currentTime,
           ),
         ),
 
@@ -313,7 +313,8 @@ class _WeatherViewState extends State<WeatherView> {
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         itemCount: 24,
                         itemBuilder: (context, index) {
-                          final hour = DateTime.now().add(Duration(hours: index));
+                          final baseTime = CityTimeService.getCityLocalTime(widget.weather.timezoneOffset);
+                          final hour = baseTime.add(Duration(hours: index));
                           
                           final temp = (widget.weather.hourlyTemps != null && index < widget.weather.hourlyTemps.length) 
                             ? widget.weather.hourlyTemps[index] 
@@ -434,7 +435,9 @@ class _WeatherViewState extends State<WeatherView> {
                           thickness: 1,
                         ),
                         itemBuilder: (context, index) {
-                          final bool hasRealData = widget.weather.dailyForecasts != null && widget.weather.dailyForecasts.isNotEmpty && index < widget.weather.dailyForecasts.length;
+                          final bool hasRealData = widget.weather.dailyForecasts != null && 
+                                                  widget.weather.dailyForecasts.isNotEmpty && 
+                                                  index < widget.weather.dailyForecasts.length;
                           
                           DateTime day;
                           int maxTemp;
@@ -444,19 +447,47 @@ class _WeatherViewState extends State<WeatherView> {
 
                           if (hasRealData) {
                             final daily = widget.weather.dailyForecasts[index];
-                            day = daily.date;
+                            day = daily.date; 
                             maxTemp = daily.maxTemp.round();
                             minTemp = daily.minTemp.round();
                             rainChance = daily.rainChance;
                             code = daily.conditionCode;
                           } else {
-                            day = DateTime.now().add(Duration(days: index + 1));
+                            final baseTime = CityTimeService.getCityLocalTime(widget.weather.timezoneOffset);
+                            day = baseTime.add(Duration(days: index)); 
                             maxTemp = (widget.weather.tempMax - (index * 0.5)).round();
                             minTemp = (widget.weather.tempMin - (index * 0.3)).round();
                             rainChance = (widget.weather.rainChance - (index * 5)).clamp(0, 100);
                             code = widget.weather.conditionCode;
                           }
+
+                          // ==========================================================
+                          // 判斷這一天是不是該城市的「今天」
+                          // ==========================================================
+                          // _currentTime 是由計時器每秒更新的該城市當地時間
+                          // 1. 取得該城市今天的日期字串 (yyyy-MM-dd)
+                          final String cityTodayStr = DateFormat('yyyy-MM-dd').format(_currentTime);
                           
+                          // 2. 取得該城市明天的日期字串
+                          final DateTime cityTomorrowDate = _currentTime.add(const Duration(days: 1));
+                          final String cityTomorrowStr = DateFormat('yyyy-MM-dd').format(cityTomorrowDate);
+                          
+                          // 3. 當前預報項目的日期字串
+                          final String forecastDayStr = DateFormat('yyyy-MM-dd').format(day);
+
+                          // 4. 判定邏輯
+                          final bool isActuallyToday = (cityTodayStr == forecastDayStr);
+                          final bool isActuallyTomorrow = (cityTomorrowStr == forecastDayStr);
+
+                          String displayDayName;
+                          if (isActuallyToday) {
+                            displayDayName = _isEnglish ? "Today" : "今天";
+                          } else if (isActuallyTomorrow) {
+                            displayDayName = _isEnglish ? "Tomorrow" : "明天";
+                          } else {
+                            displayDayName = _getFullDayName(day);
+                          }
+
                           return Padding(
                             padding: const EdgeInsets.symmetric(vertical: 5),
                             child: Row(
@@ -464,11 +495,13 @@ class _WeatherViewState extends State<WeatherView> {
                                 SizedBox(
                                   width: 100,
                                   child: Text(
-                                    LocalizationHelper.getDayLabel(day, _isEnglish),
+                                    displayDayName,
                                     style: TextStyle(
                                       color: const Color.fromARGB(255, 57, 57, 57),
                                       fontSize: 16,
-                                      fontWeight: (index == 0 && !hasRealData) ? FontWeight.bold : FontWeight.w500,
+                                      fontWeight: (isActuallyToday || isActuallyTomorrow) 
+                                          ? FontWeight.bold 
+                                          : FontWeight.w500,
                                     ),
                                   ),
                                 ),
@@ -654,7 +687,6 @@ class _WeatherViewState extends State<WeatherView> {
                 
                 const SizedBox(height: 30),
 
-                // 🔥🔥🔥 Details Grid (整合所有資訊) 🔥🔥🔥
                 Text(
                   texts['details']!, 
                   style: TextStyle(
@@ -744,7 +776,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
   final Widget? leading; 
   final Widget? trailing;
   final bool isEnglish;
-  final DateTime currentTime; // 🔥 新增：接收當前時間
+  final DateTime currentTime; 
 
   _WeatherHeaderDelegate({
     required this.weather,
@@ -752,7 +784,7 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
     required this.topPadding,
     required this.weatherIcon,
     required this.isEnglish,
-    required this.currentTime, // 🔥 新增
+    required this.currentTime, 
     this.displayCityName,
     this.leading,
     this.trailing,
@@ -766,7 +798,6 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
      );
   }
 
-  // 🔥 取得完整星期名稱
   String _getFullDayName(DateTime date) {
     if (isEnglish) {
       return DateFormat('EEEE').format(date);
@@ -847,7 +878,6 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                 )
               ),
               
-              // 🔥 Expanded view
               Positioned(
                 top: 0, 
                 left: 0, 
@@ -903,7 +933,6 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
                 )
               ),
 
-              // 🔥 Collapsed view
               Positioned(
                 top: areaTop + 50, 
                 left: 0, 
@@ -977,5 +1006,5 @@ class _WeatherHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   @override
   bool shouldRebuild(covariant _WeatherHeaderDelegate oldDelegate) => 
-    oldDelegate.weather != weather || oldDelegate.currentTime != currentTime; // 🔥 加入 currentTime 的比較
+    oldDelegate.weather != weather || oldDelegate.currentTime != currentTime; 
 }

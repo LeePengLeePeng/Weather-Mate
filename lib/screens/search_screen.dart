@@ -18,7 +18,7 @@ class CityData {
   final String country;
   final double latitude;
   final double longitude;
-  final bool isEnglish; // 🔥 新增：記錄搜尋時的語言
+  final bool isEnglish;
 
   CityData({
     required this.id, 
@@ -26,7 +26,7 @@ class CityData {
     required this.country, 
     required this.latitude, 
     required this.longitude,
-    this.isEnglish = false, // 🔥 預設為 false（中文）
+    this.isEnglish = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -35,7 +35,7 @@ class CityData {
     'country': country,
     'latitude': latitude,
     'longitude': longitude,
-    'isEnglish': isEnglish, // 🔥 保存語言設定
+    'isEnglish': isEnglish,
   };
 
   factory CityData.fromJson(Map<String, dynamic> json) {
@@ -49,7 +49,7 @@ class CityData {
       country: json['country'] ?? '',
       latitude: lat,
       longitude: lon,
-      isEnglish: json['isEnglish'] ?? false, // 🔥 讀取語言設定
+      isEnglish: json['isEnglish'] ?? false,
     );
   }
 }
@@ -75,8 +75,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   bool _isLoading = false;
   String _errorMessage = '';
   bool _isFocused = false;
-  bool _currentSearchIsEnglish = false; // 🔥 記錄當前搜尋的語言
-  
+  bool _currentSearchIsEnglish = false;
   Timer? _debounce;
   
   @override
@@ -171,7 +170,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     setState(() => _isLoading = true);
     try {
       await setLocaleIdentifier("zh_TW");
-      debugPrint("🌍 目前位置使用 zh_TW locale");
+      debugPrint("目前位置使用 zh_TW locale");
       
       LocationPermission permission = await Geolocator.checkPermission();
       if (permission == LocationPermission.denied) {
@@ -197,7 +196,6 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   Future<void> _searchCity(String query) async {
     if (query.isEmpty) return;
     
-    // ✅ 過濾掉注音符號
     if (_containsBopomofo(query)) {
       setState(() {
         _errorMessage = "請輸入中文或英文城市名稱";
@@ -207,16 +205,16 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       return;
     }
     
-    // 🔥 根據搜尋語言設定 geocoding locale
-    _currentSearchIsEnglish = _isEnglish(query); // 🔥 記錄當前搜尋語言
+    // 根據搜尋語言設定 geocoding locale
+    _currentSearchIsEnglish = _isEnglish(query);
     if (_currentSearchIsEnglish) {
       // 英文搜尋 → 使用英文結果
       await setLocaleIdentifier("en_US");
-      debugPrint("🌍 設定 locale 為 en_US");
+      debugPrint("設定 locale 為 en_US");
     } else {
       // 中文搜尋 → 使用繁體中文結果  
       await setLocaleIdentifier("zh_TW");
-      debugPrint("🌍 設定 locale 為 zh_TW");
+      debugPrint("設定 locale 為 zh_TW");
     }
 
     setState(() {
@@ -231,7 +229,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       // 去除重複的搜尋詞
       searchQueries = searchQueries.toSet().toList();
       
-      debugPrint("🔍 將搜尋 ${searchQueries.length} 個變體: $searchQueries");
+      debugPrint("將搜尋 ${searchQueries.length} 個變體: $searchQueries");
       
       List<Location> allLocations = [];
       
@@ -243,11 +241,11 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           return locationFromAddress(q).timeout(
             const Duration(seconds: 8),
             onTimeout: () {
-              debugPrint("⏱️ 搜尋 '$q' 超時");
+              debugPrint("搜尋 '$q' 超時");
               return <Location>[];
             },
           ).catchError((e) {
-            debugPrint("❌ 搜尋 '$q' 失敗: $e");
+            debugPrint("搜尋 '$q' 失敗: $e");
             return <Location>[];
           });
         }).toList();
@@ -278,7 +276,6 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
         if (processedCount >= 30) break;
         
         try {
-          // 🔥 移除 localeIdentifier 參數，因為 setLocaleIdentifier 已經設定了全域 locale
           List<Placemark> placemarks = await placemarkFromCoordinates(
             loc.latitude, 
             loc.longitude
@@ -294,15 +291,15 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           
           Placemark p = placemarks.first;
           String title = p.locality ?? p.subLocality ?? p.name ?? query;
-          // 如果抓到的名字是空的或是純數字(有時候會抓到路號)，就改用上一層行政區
+          // 如果抓到的名字是空的或是純數字，就改用上一層行政區
           if (title.trim().isEmpty || RegExp(r'^\d+$').hasMatch(title)) {
              title = p.administrativeArea ?? query;
           }
 
-          // 2. 決定副標題 (Subtitle) - 組合「行政區, 國家」
+          // 決定副標題 (Subtitle) - 組合「行政區, 國家」
           List<String> subParts = [];
           
-          // 如果行政區存在，且跟標題不一樣 (避免顯示 "Tokyo, Tokyo")
+          // 如果行政區存在，且跟標題不一樣
           if (p.administrativeArea != null && p.administrativeArea!.isNotEmpty && p.administrativeArea != title) {
             subParts.add(p.administrativeArea!);
           }
@@ -329,13 +326,13 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
               country: countryInfo,
               latitude: loc.latitude,
               longitude: loc.longitude,
-              isEnglish: _currentSearchIsEnglish, // 🔥 記錄語言設定
+              isEnglish: _currentSearchIsEnglish,
             );
           }
           
           processedCount++;
         } catch (e) {
-          debugPrint("❌ 解析地址失敗: $e");
+          debugPrint("解析地址失敗: $e");
         }
       }
 
@@ -349,7 +346,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
         bool isProbablyCountry = query.length <= 4 && !_isEnglish(query);
         
         if (isCountryQuery || isEnglishQuery || isProbablyCountry) {
-          debugPrint("⚠️ 查詢無匹配結果,顯示所有找到的地點");
+          debugPrint("查詢無匹配結果,顯示所有找到的地點");
           filteredResults = uniqueLocations.values.toList();
         }
       }
@@ -370,7 +367,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           _errorMessage = filteredResults.isEmpty ? "找不到「$query」相關地點" : '';
           
           if (_searchResults.isNotEmpty) {
-            debugPrint("✅ 找到 ${_searchResults.length} 個結果");
+            debugPrint("找到 ${_searchResults.length} 個結果");
           }
         });
       }
@@ -383,7 +380,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           _searchResults = [];
         });
       }
-      debugPrint("❌ 搜尋錯誤: $e");
+      debugPrint("搜尋錯誤: $e");
     }
   }
   String _getDistrictKey({
@@ -403,7 +400,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     return '$country-$administrativeArea-$locality';
   }
 
-  // ✅ 新增：檢測注音符號
+  // 檢測注音符號
   bool _containsBopomofo(String text) {
     return RegExp(r'[\u3105-\u312F\u31A0-\u31BF]').hasMatch(text);
   }
@@ -412,7 +409,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     List<String> variations = [];
     String lowerQuery = query.toLowerCase().trim();
     
-    // ✅ 優先檢查是否為已知城市/國家
+    // 優先檢查是否為已知城市/國家
     Map<String, String> knownPlaces = _getKnownPlaceMapping();
     
     if (knownPlaces.containsKey(lowerQuery)) {
@@ -440,7 +437,6 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     } else {
       // 中文查詢
       if (query.length <= 2) {
-        // 短查詢(如「加」「日」)可能是國家簡稱
         variations.add(query);
         
         // 嘗試加上「國」
@@ -448,7 +444,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           variations.add('$query國');
         }
       } else if (query.length <= 4) {
-        // 中等長度(如「班夫」「京都」)
+        // 中等長度
         variations.add(query);
         
         if (!query.contains('市') && !query.contains('區') && !query.contains('縣')) {
@@ -472,7 +468,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     return variations;
   }
   
-  // ✅ 新增：常見城市/國家對應表
+  // 常見城市/國家對應表
   Map<String, String> _getKnownPlaceMapping() {
     return {
       '加': 'Canada',
@@ -643,7 +639,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     }
     
     String displayName = parts.join('');
-    debugPrint("🎯 Final display name: $displayName");
+    debugPrint("Final display name: $displayName");
     
     return displayName;
   }
@@ -797,7 +793,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
   Widget _buildListWithCurrentLocation() {
     return Column(
       children: [
-        // 🔥 固定的 "目前位置"（不參與排序）
+        // 固定的 "目前位置"
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
           child: Container(
@@ -825,16 +821,15 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
           ),
         ),
         
-        // 🔥 可排序的城市列表
+        // 可排序的城市列表
         Expanded(
           child: _savedCities.isEmpty
-              ? const SizedBox() // 如果沒有儲存的城市，顯示空白
+              ? const SizedBox()
               : SlidableAutoCloseBehavior(
                   child: ReorderableListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                     itemCount: _savedCities.length,
                     proxyDecorator: (child, index, animation) {
-                      // 🔥 自訂拖動時的外觀，保持原本的泡泡質感
                       return AnimatedBuilder(
                         animation: animation,
                         builder: (context, child) {
@@ -856,7 +851,6 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                     },
                     onReorder: (oldIndex, newIndex) {
                       setState(() {
-                        // 🔥 簡化的排序邏輯（不需要考慮 "目前位置"）
                         final adjustedNewIndex = newIndex > oldIndex ? newIndex - 1 : newIndex;
                         
                         final city = _savedCities.removeAt(oldIndex);
@@ -869,7 +863,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                       final city = _savedCities[index];
 
                       return Container(
-                        key: Key(city.id), // 🔥 每個項目都要有唯一 key
+                        key: Key(city.id), // 每個項目都要有唯一 key
                         margin: const EdgeInsets.only(bottom: 10),
                         child: Slidable(
                           groupTag: 'saved_cities_list',
@@ -927,17 +921,17 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                                 size: 14,
                               ),
                               onTap: () async {
-                                // 🔥 根據保存的語言設定設置 locale
+                                // 根據保存的語言設定設置 locale
                                 if (city.isEnglish) {
                                   await setLocaleIdentifier("en_US");
-                                  debugPrint("🌍 城市使用英文顯示，設定 locale 為 en_US");
+                                  debugPrint("城市使用英文顯示，設定 locale 為 en_US");
                                 } else {
                                   await setLocaleIdentifier("zh_TW");
-                                  debugPrint("🌍 城市使用中文顯示，設定 locale 為 zh_TW");
+                                  debugPrint("城市使用中文顯示，設定 locale 為 zh_TW");
                                 }
 
                                 final displayName = _formatCityNameForDisplay(city);
-                                print("🏙️ 從列表選擇城市: $displayName (isEnglish: ${city.isEnglish})");
+                                print("從列表選擇城市: $displayName (isEnglish: ${city.isEnglish})");
 
                                 context.read<WeatherBlocBloc>().add(FetchWeather(
                                       Position(
@@ -969,7 +963,6 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     );
   }
 
-  // 🔥 新增: 智能格式化城市名稱的方法
   String _formatCityNameForDisplay(CityData city) {
     // 如果沒有國家信息,直接返回城市名
     if (city.country.isEmpty) {
@@ -984,11 +977,10 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     // 判斷是否為本地國家
     bool isLocalCountry = _isLocalCountry(country);
     
-    // 🌏 本地國家:只顯示 "城市名, 行政區"
+    // 本地國家:只顯示 "城市名, 行政區"
     if (isLocalCountry) {
       if (parts.length >= 2) {
-        String region = _simplifyEnglishName(parts[0]); // 第一部分是行政區
-        // 避免重複顯示 (例如: "大阪市, 大阪府" 可以簡化為 "大阪, 大阪府")
+        String region = _simplifyEnglishName(parts[0]);
         if (cityName.contains(region) || region.contains(cityName)) {
           return cityName; // 只顯示城市名
         }
@@ -997,8 +989,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
       return cityName;
     }
     
-    // 🌍 國外城市:顯示 "城市名, 國家"
-    // 特殊處理:如果城市名本身就很長,只顯示城市名
+    // 如果城市名本身就很長,只顯示城市名
     if (cityName.length > 15) {
       return cityName;
     }
@@ -1006,7 +997,7 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
     return '$cityName, $country';
   }
 
-  // 🆕 簡化英文地名,移除 District/City/Township 等後綴
+  // 簡化英文地名,移除 District/City/Township 等後綴
   String _simplifyEnglishName(String name) {
     return name
         .replaceAll(' District', '')
@@ -1064,17 +1055,17 @@ class _SearchScreenState extends State<SearchScreen> with AutomaticKeepAliveClie
                   });
 
                   if (mounted) {
-                    // 🔥 根據保存的語言設定設置 locale
+                    // 根據保存的語言設定設置 locale
                     if (city.isEnglish) {
                       await setLocaleIdentifier("en_US");
-                      debugPrint("🌍 城市使用英文顯示，設定 locale 為 en_US");
+                      debugPrint("城市使用英文顯示，設定 locale 為 en_US");
                     } else {
                       await setLocaleIdentifier("zh_TW");
-                      debugPrint("🌍 城市使用中文顯示，設定 locale 為 zh_TW");
+                      debugPrint("城市使用中文顯示，設定 locale 為 zh_TW");
                     }
                     
                     final displayName = _formatCityNameForDisplay(city);
-                    print("🏙️ 準備顯示城市: $displayName (isEnglish: ${city.isEnglish})");
+                    print("準備顯示城市: $displayName (isEnglish: ${city.isEnglish})");
                     context.read<WeatherBlocBloc>().add(FetchWeather(Position(
                       latitude: city.latitude,
                       longitude: city.longitude,

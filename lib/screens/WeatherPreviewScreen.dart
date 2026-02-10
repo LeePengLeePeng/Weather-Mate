@@ -74,11 +74,11 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
     // 判斷是否為本地國家
     bool isLocalCountry = _isLocalCountry(country);
     
-    // 🌏 本地國家:只顯示 "城市名, 行政區"
+    // 本地國家:只顯示 "城市名, 行政區"
     if (isLocalCountry) {
       if (parts.length >= 2) {
         String region = _simplifyEnglishName(parts[0]); // 第一部分是行政區
-        // 避免重複顯示 (例如: "大阪市, 大阪府" 可以簡化為 "大阪, 大阪府")
+        // 避免重複顯示
         if (cityName.contains(region) || region.contains(cityName)) {
           return cityName; // 只顯示城市名
         }
@@ -87,8 +87,7 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
       return cityName;
     }
     
-    // 🌍 國外城市:顯示 "城市名, 國家"
-    // 特殊處理:如果城市名本身就很長,只顯示城市名
+    // 如果城市名本身就很長,只顯示城市名
     if (cityName.length > 15) {
       return cityName;
     }
@@ -96,7 +95,7 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
     return '$cityName, $country';
   }
 
-  // 🆕 簡化英文地名,移除 District/City/Township 等後綴
+  // 簡化英文地名,移除 District/City/Township 等後綴
   String _simplifyEnglishName(String name) {
     return name
         .replaceAll(' District', '')
@@ -138,9 +137,8 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
       );
     }
     
-    // 🔥 成功畫面
+    // 成功畫面
     return Scaffold(
-      // 這裡的 backgroundColor 設什麼都沒關係，因為會被 WeatherBackground 蓋過
       body: Stack(
         children: [
           // ===========================================
@@ -148,7 +146,7 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
           // ===========================================
           Positioned.fill(
             child: WeatherBackground(
-              weather: _weather, // 把抓到的天氣傳進去，這樣預覽時背景顏色也會跟著變！
+              weather: _weather,
               child: const SizedBox(),
             ),
           ),
@@ -161,13 +159,13 @@ class _WeatherPreviewScreenState extends State<WeatherPreviewScreen> {
               weather: _weather!,
               displayCityName: _displayCityName,
               
-              // 左上角：取消按鈕 (X)
+              // 取消按鈕
               leading: IconButton(
                 icon: const Icon(Icons.close, color: Color.fromARGB(255, 57, 57, 57), size: 30),
                 onPressed: () => Navigator.pop(context, false),
               ),
               
-              // 右上角：加入按鈕
+              // 加入按鈕
               trailing: TextButton(
                 onPressed: () => Navigator.pop(context, true),
                 child: const Text(

@@ -17,7 +17,6 @@ class KeepAliveWrapper extends StatefulWidget {
 class _KeepAliveWrapperState extends State<KeepAliveWrapper> with AutomaticKeepAliveClientMixin {
   @override
   Widget build(BuildContext context) {
-    // 🔥 這一行絕對不能少！沒有它，KeepAlive 就無效！
     super.build(context); 
     return widget.child;
   }

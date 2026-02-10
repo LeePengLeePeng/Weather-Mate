@@ -87,10 +87,8 @@ class WeatherPromptHelper {
   static String _formatDailyDigest(WeatherModel w) {
     StringBuffer sb = StringBuffer();
 
-    // ✅ 修正 1: 優先檢查是否有現成的 dailyForecasts (這包含未來一週資料)
     if (w.dailyForecasts.isNotEmpty) {
       for (var day in w.dailyForecasts) {
-        // 🔥 修改這裡：加上星期幾
         String wd = _getWeekday(day.date);
         String dateLabel = "${day.date.month}/${day.date.day} ($wd)";
         
@@ -99,7 +97,6 @@ class WeatherPromptHelper {
       return sb.toString();
     }
 
-    // 🔽 如果真的沒有 dailyForecasts，才使用舊邏輯 (從 hourly 硬算)
     if (w.hourlyTemps.length < 24) return "   (Insufficient Data)";
 
     int days = w.hourlyTemps.length ~/ 8; 
