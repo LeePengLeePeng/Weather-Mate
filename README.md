@@ -106,6 +106,24 @@ AI 並不直接作為資料來源，而是作為「氣象資料解釋層（Inter
 | 跨平台狀態 | Flutter 架構，尚未針對 Android / Web 進行裝置實測 |
 ---
 
-## 截圖預覽
+## App Preview
+
+### Current Weather Overview
+![Current Weather](screenshots/01_current_weather.png)
+
+### 5-Day Forecast
+![5 Day Forecast](screenshots/02_5day_forecast.png)
+
+### Weather Metrics Panel
+![Weather Metrics](screenshots/03_weather_metrics.png)
+
+### AI Weather Assistant
+![AI Assistant](screenshots/04_ai_weather.png)
+
+### AI Conversation History
+![AI History](screenshots/05_ai_conversation_history.png)
+
+### Saved Locations Manager
+![Saved Locations](screenshots/06_saved_locations_manager.png)
 
 ---
