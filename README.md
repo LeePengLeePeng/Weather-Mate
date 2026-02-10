@@ -111,3 +111,10 @@ AI 並不直接作為資料來源，而是作為「氣象資料解釋層（Inter
 <table> <tr> <th align="center">即時天氣總覽</th> <th align="center">未來五日天氣預報</th> <th align="center">天氣細節資訊面板</th> </tr> <tr> <td align="center"><img src="screenshots/01_current_weather.PNG" width="260"></td> <td align="center"><img src="screenshots/02_5day_forecast.PNG" width="260"></td> <td align="center"><img src="screenshots/03_weather_details.PNG" width="260"></td> </tr> <tr> <th align="center">AI 天氣穿搭助理</th> <th align="center">AI 對話紀錄檢視</th> <th align="center">儲存地區管理</th> </tr> <tr> <td align="center"><img src="screenshots/04_ai_weather.PNG" width="260"></td> <td align="center"><img src="screenshots/05_ai_conversation_history.PNG" width="260"></td> <td align="center"><img src="screenshots/06_saved_locations_manager.PNG" width="260"></td> </tr> </table>
 
 ---
+
+## Notice
+
+This project is developed as a personal portfolio application for demonstration purposes.  
+The system design, feature planning, and integration are directed by the author, with AI-assisted development used as part of the workflow.
+
+© 2025 LeePengLeePeng 
