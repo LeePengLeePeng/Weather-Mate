@@ -24,8 +24,7 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
   final ScrollController _dialogueScrollController = ScrollController();
   final FocusNode _focusNode = FocusNode(); 
   
-  String get _apiKey => dotenv.env['CHAT_API_KEY'] ?? '';
-  static const String _modelId = 'llama-3.3-70b-versatile'; 
+  String get _proxyUrl => dotenv.env['AI_PROXY_URL'] ?? '';
 
   TaroState _taroState = TaroState.idle; 
   String _displayDialogue = ""; 
@@ -215,23 +214,29 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
       var message = response['choices'][0]['message'];
 
       if (message['tool_calls'] != null) {
+        // 助理的 tool_calls 訊息只加一次，且只保留必要欄位
+        apiMessages.add({
+          'role': 'assistant',
+          'content': message['content'],
+          'tool_calls': message['tool_calls'],
+        });
+
         for (var toolCall in message['tool_calls']) {
           final functionName = toolCall['function']['name'];
           final args = jsonDecode(toolCall['function']['arguments']);
-          
-          if (functionName == 'get_weather_forecast') {
-             if (mounted) _startTypewriterEffect("🔍 ☁️ ${args['location']}...");
-             
-             final weatherRepo = WeatherRepository(); 
-             String weatherInfo = await weatherRepo.getWeatherForecastForGroq(args['location']);
 
-             apiMessages.add(message);
-             apiMessages.add({
-               'role': 'tool',
-               'tool_call_id': toolCall['id'],
-               'name': functionName,
-               'content': weatherInfo,
-             });
+          if (functionName == 'get_weather_forecast') {
+            if (mounted) _startTypewriterEffect("🔍 ☁️ ${args['location']}...");
+
+            final weatherRepo = WeatherRepository();
+            String weatherInfo = await weatherRepo.getWeatherForecastForGroq(args['location']);
+
+            apiMessages.add({
+              'role': 'tool',
+              'tool_call_id': toolCall['id'],
+              'name': functionName,
+              'content': weatherInfo,
+            });
           }
         }
         response = await _callGroqAPI(apiMessages);
@@ -256,25 +261,28 @@ class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
     }
   }
 
-  Future<Map<String, dynamic>> _callGroqAPI(List<Map<String, dynamic>> messages, {List<dynamic>? tools}) async {
-    final url = Uri.parse('https://api.groq.com/openai/v1/chat/completions');
-    final response = await http.post(
-      url,
-      headers: {
-        'Content-Type': 'application/json; charset=utf-8',
-        'Authorization': 'Bearer $_apiKey',
-      },
-      body: jsonEncode({
-        'model': _modelId,
-        'messages': messages,
-        if (tools != null) 'tools': tools,
-        'tool_choice': 'auto',
-      }),
-    );
+  Future<Map<String, dynamic>> _callGroqAPI(
+    List<Map<String, dynamic>> messages, {
+    List<dynamic>? tools,
+  }) async {
+    final response = await http
+        .post(
+          Uri.parse(_proxyUrl),
+          headers: {'Content-Type': 'application/json; charset=utf-8'},
+          body: jsonEncode({
+            'messages': messages,
+            if (tools != null) ...{
+              'tools': tools,
+              'tool_choice': 'auto',
+            },
+          }),
+        )
+        .timeout(const Duration(seconds: 30));
+
     if (response.statusCode == 200) {
       return jsonDecode(utf8.decode(response.bodyBytes));
     } else {
-      throw Exception('API Error');
+      throw Exception('API Error ${response.statusCode}: ${utf8.decode(response.bodyBytes)}');
     }
   }
 
